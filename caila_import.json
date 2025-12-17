@@ -1,0 +1,57 @@
+{
+  "project": {
+    "id": "brain",
+    "name": "brain",
+    "folder": "/"
+  },
+  "settings": {
+    "language": "ru",
+    "spellingCorrection": false,
+    "classificationAlgorithm": "sts",
+    "timezone": "Europe/Moscow",
+    "extendedSettings": {
+      "tokenizerEngine": "default"
+    }
+  },
+  "intents": [
+    {
+      "path": "/пока",
+      "description": null,
+      "answer": null,
+      "customData": null,
+      "enabled": true,
+      "phrases": [
+        {
+          "text": "пока",
+          "entities": null
+        }
+      ],
+      "patterns": null,
+      "slots": null
+    },
+    {
+      "path": "/привет",
+      "description": null,
+      "answer": null,
+      "customData": null,
+      "enabled": true,
+      "phrases": [
+        {
+          "text": "привет",
+          "entities": null
+        }
+      ],
+      "patterns": null,
+      "slots": null
+    }
+  ],
+  "entities": [],
+  "enabledSystemEntities": [
+    "duckling.number",
+    "duckling.time",
+    "duckling.duration",
+    "duckling.phone-number",
+    "duckling.email",
+    "duckling.url"
+  ]
+}
