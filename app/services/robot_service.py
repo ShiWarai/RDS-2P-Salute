@@ -1,10 +1,9 @@
 """
-Модуль для управления роботом-пандой.
+Сервис управления роботом-пандой.
 Обрабатывает голосовые команды и отправляет их на моторы робота.
 """
 import logging
-from dataclasses import dataclass
-from enum import Enum
+import re
 from typing import Dict, Any, Optional
 
 try:
@@ -12,42 +11,32 @@ try:
 except ImportError:
     httpx = None
 
+from app.models.commands import RobotCommand, CommandResult
+
 logger = logging.getLogger(__name__)
 
-
-class RobotCommand(Enum):
-    """Типы команд для робота"""
-    LIE_DOWN = "lie_down"  # Лежать
-    STAND_UP = "stand_up"  # Встать
-    ATTENTION = "attention"  # Равняйсь/Внимание
-    HELP = "help"  # Помощь
-    SILENCE = "silence"  # Молчи - завершить прослушивание
-    UNKNOWN = "unknown"  # Неизвестная команда
-
-
-@dataclass
-class CommandResult:
-    """Результат обработки команды"""
-    command: RobotCommand
-    text: str  # Текст ответа пользователю
-    motor_command: Optional[Dict[str, Any]] = None  # Команда для моторов
-    success: bool = True
-    error_message: Optional[str] = None
-    finished: bool = False  # Флаг завершения сессии
+# Предкомпилированные регулярные выражения для команд (для производительности)
+_COMMAND_PATTERNS = {
+    RobotCommand.LIE_DOWN: re.compile(r"(?:лежать|ляг|лечь|приляг|усни|ложись)"),
+    RobotCommand.STAND_UP: re.compile(r"(?:вставай|встань|встать|вставать|поднимайся|поднимись)"),
+    RobotCommand.ATTENTION: re.compile(r"(?:равняйсь|равняйся|равняться|внимание|смирно)"),
+    RobotCommand.HELP: re.compile(r"(?:помощь|помоги|что\s+ты\s+умеешь|что\s+умеешь|команды|список\s+команд|что\s+можно)"),
+    RobotCommand.SILENCE: re.compile(r"(?:молчи|молчать|замолчи|хватит|стоп|прекрати\s+слушать)")
+}
 
 
-class RobotController:
-    """Контроллер для управления роботом-пандой"""
+class RobotService:
+    """Сервис для управления роботом-пандой"""
     
     def __init__(self, robot_api_url: Optional[str] = None):
         """
-        Инициализация контроллера робота
+        Инициализация сервиса робота
         
         Args:
             robot_api_url: URL API робота для отправки команд (опционально)
         """
         self.robot_api_url = robot_api_url
-        logger.info(f"RobotController initialized. Robot API URL: {robot_api_url or 'Not configured'}")
+        logger.info(f"RobotService initialized. Robot API URL: {robot_api_url or 'Not configured'}")
     
     def parse_command(self, utterance: str) -> RobotCommand:
         """
@@ -62,7 +51,6 @@ class RobotController:
         utterance_lower = utterance.lower().strip()
         
         # Извлекаем действие из фразы "скажи роботу <действие>" или "скажи роботу панде <действие>"
-        # Варианты: "скажи роботу", "скажи роботу панде", "скажи панде", "роботу"
         action = utterance_lower
         
         # Убираем префиксы команд
@@ -84,25 +72,12 @@ class RobotController:
                 action = utterance_lower[len(prefix):].strip()
                 break
         
-        # Если не нашли префикс, пробуем найти команду напрямую
-        if action == utterance_lower:
-            # Проверяем, есть ли команда без префикса (для обратной совместимости)
-            pass
-        
-        # Словарь ключевых слов для каждой команды
-        command_keywords = {
-            RobotCommand.LIE_DOWN: ["лежать", "ляг", "лечь", "приляг", "усни", "ложись"],
-            RobotCommand.STAND_UP: ["вставай", "встань", "встать", "поднимайся", "поднимись"],
-            RobotCommand.ATTENTION: ["равняйсь", "равняйся", "внимание", "смирно"],
-            RobotCommand.HELP: ["помощь", "помоги", "что ты умеешь", "что умеешь", "команды", "список команд", "что можно"],
-            RobotCommand.SILENCE: ["молчи", "замолчи", "хватит", "стоп", "прекрати слушать"]
-        }
-        
         # Ищем команду в извлеченном действии или в исходной фразе
         search_text = action if action != utterance_lower else utterance_lower
         
-        for command, keywords in command_keywords.items():
-            if any(keyword in search_text for keyword in keywords):
+        # Проверяем предкомпилированные паттерны (более эффективно, чем any() с циклом)
+        for command, pattern in _COMMAND_PATTERNS.items():
+            if pattern.search(search_text):
                 return command
         
         return RobotCommand.UNKNOWN
@@ -149,17 +124,21 @@ class RobotController:
         
         return motor_commands.get(command, {})
     
-    async def send_command_to_robot(self, motor_command: Dict[str, Any]) -> bool:
+    async def send_command_to_robot(self, motor_command: Dict[str, Any], robot_url: Optional[str] = None) -> bool:
         """
         Отправляет команду на моторы робота
         
         Args:
             motor_command: Команда для моторов
+            robot_url: URL робота (если не указан, используется self.robot_api_url)
             
         Returns:
             bool: True если команда успешно отправлена
         """
-        if not self.robot_api_url:
+        # Используем переданный URL или URL по умолчанию
+        url = robot_url or self.robot_api_url
+        
+        if not url:
             logger.warning("Robot API URL not configured. Command logged but not sent.")
             logger.debug(f"Motor command (not sent): {motor_command}")
             return False
@@ -171,12 +150,18 @@ class RobotController:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.post(
-                    f"{self.robot_api_url}/motors/command",
+                    f"{url}/motors/command",
                     json=motor_command
                 )
                 response.raise_for_status()
                 logger.info(f"Command sent to robot successfully")
                 return True
+        except httpx.ConnectError:
+            logger.error(f"Failed to connect to robot at {url}")
+            return False
+        except httpx.TimeoutException:
+            logger.error(f"Timeout while connecting to robot at {url}")
+            return False
         except Exception as e:
             logger.error(f"Failed to send command to robot: {e}", exc_info=True)
             return False
@@ -196,10 +181,14 @@ class RobotController:
         # Определяем текст ответа пользователю (для робота-панды)
         if command == RobotCommand.HELP:
             text = (
-                "Я робот-панда 🐼! Доступные команды:\n"
-                "• Скажи роботу лежать, вставай, равняйсь;\n"
-                "• Помощь - список команд;\n"
-                "• Молчи - прекратить прослушивание."
+                "Доступные команды:\n"
+                "• Команда \"Скажи роботу лежать\";\n"
+                "• Команда \"Скажи роботу вставай\";\n"
+                "• Команда \"Скажи роботу равняйсь\";\n"
+                "• Команда \"Привяжи робота один\" (или два, три и т.д.);\n"
+                "• Команда \"Отвяжи робота\";\n"
+                "• Команда \"Помощь\";\n"
+                "• Команда \"Молчи\"."
             )
         elif command == RobotCommand.SILENCE:
             text = "Хорошо, помолчим. 🐼👋"
@@ -226,12 +215,13 @@ class RobotController:
             finished=(command == RobotCommand.SILENCE)  # Завершаем сессию только по команде "молчи"
         )
     
-    async def execute_command(self, utterance: str) -> CommandResult:
+    async def execute_command(self, utterance: str, robot_url: Optional[str] = None) -> CommandResult:
         """
         Выполняет команду: обрабатывает и отправляет на робота
         
         Args:
             utterance: Текст команды пользователя
+            robot_url: URL робота конкретного пользователя (опционально)
             
         Returns:
             CommandResult: Результат выполнения команды
@@ -240,10 +230,11 @@ class RobotController:
         
         # Если команда распознана, отправляем на робота
         if result.success and result.motor_command:
-            send_success = await self.send_command_to_robot(result.motor_command)
+            send_success = await self.send_command_to_robot(result.motor_command, robot_url)
             if not send_success:
                 result.error_message = "Не удалось отправить команду роботу"
                 logger.warning(f"Command execution failed: {result.error_message}")
         
         return result
+
 

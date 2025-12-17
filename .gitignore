@@ -39,6 +39,17 @@ ENV/
 
 # Logs
 *.log
+logs/
+
+# Binding data (auto-generated)
+user_robot_bindings.json
+binding_states.json
+
+# PID files and logs
+*.pid
+*.log
+data/*.pid
+data/*.log
 
 # OS
 .DS_Store
