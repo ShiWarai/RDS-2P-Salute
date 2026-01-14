@@ -195,6 +195,135 @@ curl http://localhost:8000/
 
 Или откройте в браузере: `http://localhost:8000/docs` для просмотра автоматической документации API.
 
+## Запуск через Docker (Рекомендуется)
+
+Проект полностью контейнеризирован и готов к запуску через Docker Compose.
+
+### Требования
+
+- Docker версии 20.10 или выше
+- Docker Compose версии 1.29 или выше
+
+### Быстрый старт
+
+1. **Запуск всех сервисов:**
+   ```bash
+   docker-compose up -d
+   ```
+
+   Это запустит:
+   - Главное приложение на порту 8000
+   - Три заглушки роботов на портах 8081, 8082, 8083
+
+2. **Проверка статуса:**
+   ```bash
+   docker-compose ps
+   ```
+
+3. **Просмотр логов:**
+   ```bash
+   # Все сервисы
+   docker-compose logs -f
+   
+   # Конкретный сервис
+   docker-compose logs -f app
+   docker-compose logs -f robot-1
+   ```
+
+4. **Остановка:**
+   ```bash
+   docker-compose down
+   ```
+
+### Структура Docker
+
+Проект использует два типа образов:
+
+1. **Главное приложение** (`Dockerfile`)
+   - Базовый образ: `python:3.10-slim`
+   - Порт: 8000
+   - Volumes: `config/`, `data/`, `logs/`
+
+2. **Заглушки роботов** (`robot_stub/Dockerfile`)
+   - Базовый образ: `python:3.10-slim`
+   - Параметр: `ROBOT_ID` (переменная окружения)
+   - Порт вычисляется автоматически: `8080 + ROBOT_ID`
+   - Используется один образ для всех роботов с разными параметрами
+
+### Конфигурация для Docker
+
+**Важно:** В Docker окружении URL роботов в `config/robots.json` должны использовать имена сервисов Docker, а не `localhost`:
+
+```json
+{
+  "1": {
+    "id": "1",
+    "name": "Робот-панда 1",
+    "url": "http://robot-panda-stub-1:8081"
+  },
+  "2": {
+    "id": "2",
+    "name": "Робот-панда 2",
+    "url": "http://robot-panda-stub-2:8082"
+  },
+  "3": {
+    "id": "3",
+    "name": "Робот-панда 3",
+    "url": "http://robot-panda-stub-3:8083"
+  }
+}
+```
+
+### Управление контейнерами
+
+```bash
+# Запуск только главного приложения
+docker-compose up -d app
+
+# Запуск конкретного робота
+docker-compose up -d robot-1
+
+# Перезапуск сервиса
+docker-compose restart app
+
+# Пересборка образов
+docker-compose build
+
+# Просмотр логов конкретного сервиса
+docker-compose logs -f robot-2
+
+# Остановка всех сервисов
+docker-compose down
+
+# Остановка с удалением volumes (осторожно - удалит данные!)
+docker-compose down -v
+```
+
+### Volumes
+
+Docker Compose монтирует следующие директории:
+
+- `./config:/app/config:ro` - конфигурация (read-only)
+- `./data:/app/data` - данные привязок и состояний
+- `./logs:/app/logs` - логи приложения
+
+### Health Checks
+
+Все сервисы имеют health checks:
+- Главное приложение: `http://localhost:8000/health`
+- Заглушки роботов: `http://localhost:8081/health`, `http://localhost:8082/health`, `http://localhost:8083/health`
+
+### Переменные окружения
+
+Заглушки роботов используют переменную окружения `ROBOT_ID`:
+- `robot-1`: `ROBOT_ID=1` → порт 8081
+- `robot-2`: `ROBOT_ID=2` → порт 8082
+- `robot-3`: `ROBOT_ID=3` → порт 8083
+
+### Сеть Docker
+
+Все сервисы находятся в одной Docker сети `robot-panda-network` и могут обращаться друг к другу по именам сервисов.
+
 ## Настройка в SmartApp Studio
 
 **Важно:** SmartApp API требует доменное имя с HTTPS, а не IP-адрес!
@@ -280,7 +409,14 @@ RDS-2P-Salute/
 │   ├── stop_service.sh
 │   ├── restart_service.sh
 │   └── status_service.sh
+├── robot_stub/            # Заглушка робота для тестирования
+│   ├── __init__.py
+│   ├── main.py            # FastAPI сервер-заглушка
+│   └── Dockerfile         # Dockerfile для заглушек роботов
 ├── robot-panda.service    # systemd service файл
+├── Dockerfile             # Dockerfile для главного приложения
+├── docker-compose.yml     # Docker Compose конфигурация
+├── .dockerignore          # Исключения для Docker build
 ├── requirements.txt       # Зависимости Python
 ├── .gitignore
 └── README.md
@@ -373,6 +509,24 @@ sudo journalctl -u robot-panda.service --since today
 [2024-12-17 12:00:00] [INFO] Motor command: {'action': 'lie_down', 'motors': {...}}
 ```
 
+**Если сервер запущен через Docker:**
+```bash
+# Просмотр логов главного приложения
+docker-compose logs -f app
+
+# Просмотр логов конкретного робота
+docker-compose logs -f robot-1
+
+# Просмотр последних 50 строк логов
+docker-compose logs --tail 50 app
+
+# Просмотр логов всех сервисов
+docker-compose logs -f
+
+# Просмотр логов конкретного контейнера по ID
+docker logs -f <container_id>
+```
+
 ## Разработка
 
 Проект использует:
@@ -419,6 +573,7 @@ curl -X POST http://localhost:8000/robot/command \
 
 Настройте доступных роботов в файле `config/robots.json`:
 
+**Для локального запуска (без Docker):**
 ```json
 {
   "1": {
@@ -434,14 +589,37 @@ curl -X POST http://localhost:8000/robot/command \
 }
 ```
 
+**Для Docker окружения (используйте имена сервисов):**
+```json
+{
+  "1": {
+    "id": "1",
+    "name": "Робот-панда 1",
+    "url": "http://robot-panda-stub-1:8081"
+  },
+  "2": {
+    "id": "2",
+    "name": "Робот-панда 2",
+    "url": "http://robot-panda-stub-2:8082"
+  },
+  "3": {
+    "id": "3",
+    "name": "Робот-панда 3",
+    "url": "http://robot-panda-stub-3:8083"
+  }
+}
+```
+
 Каждый робот должен иметь:
 - `id` - уникальный идентификатор (строка)
 - `name` - отображаемое имя
 - `url` - URL API робота (должен поддерживать endpoints `/bind/request` и `/motors/command`)
 
+**Важно:** В Docker окружении используйте имена сервисов из `docker-compose.yml` вместо `localhost`, так как контейнеры общаются через Docker сеть.
+
 ### Запуск заглушки робота
 
-Для тестирования можно запустить скрипт-заглушку робота:
+**Локальный запуск (без Docker):**
 
 ```bash
 # Запуск робота на порту 8081
@@ -449,12 +627,29 @@ python3 -m robot_stub.main 8081
 
 # Или на другом порту
 python3 -m robot_stub.main 8082
+
+# Или через переменную окружения ROBOT_ID
+ROBOT_ID=1 python3 -m robot_stub.main
+```
+
+**Docker запуск (рекомендуется):**
+
+```bash
+# Запуск всех заглушек через docker-compose
+docker-compose up -d robot-1 robot-2 robot-3
+
+# Или запуск конкретной заглушки
+docker-compose up -d robot-1
+
+# Просмотр логов заглушки
+docker-compose logs -f robot-1
 ```
 
 Заглушка будет:
 - Генерировать 4-значные коды при запросе `/bind/request`
-- Логировать коды в консоль
+- Логировать коды в консоль (в Docker: `docker-compose logs robot-1`)
 - Принимать команды управления на `/motors/command`
+- Поддерживать переменную окружения `ROBOT_ID` для автоматического вычисления порта
 
 ## Переменные окружения
 

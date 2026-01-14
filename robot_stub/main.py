@@ -144,13 +144,33 @@ if __name__ == "__main__":
     # Запуск на разных портах для разных роботов
     # В реальности каждый робот будет иметь свой IP/порт
     import sys
+    import os
     
-    port = 8081
-    if len(sys.argv) > 1:
+    # Приоритет: переменная окружения ROBOT_ID > аргумент командной строки > дефолт
+    port = None
+    
+    # Проверяем переменную окружения ROBOT_ID
+    robot_id_env = os.getenv("ROBOT_ID")
+    if robot_id_env:
         try:
-            port = int(sys.argv[1])
+            robot_id = int(robot_id_env)
+            port = 8080 + robot_id
+            logger.info(f"Using ROBOT_ID from environment: {robot_id}, port: {port}")
         except ValueError:
-            logger.warning(f"Invalid port {sys.argv[1]}, using default 8081")
+            logger.warning(f"Invalid ROBOT_ID environment variable: {robot_id_env}, will try command line argument")
+    
+    # Если порт не был установлен из переменной окружения, проверяем аргумент командной строки
+    if port is None:
+        if len(sys.argv) > 1:
+            try:
+                port = int(sys.argv[1])
+                logger.info(f"Using port from command line argument: {port}")
+            except ValueError:
+                logger.warning(f"Invalid port {sys.argv[1]}, using default 8081")
+                port = 8081
+        else:
+            port = 8081  # дефолт
+            logger.info(f"Using default port: {port}")
     
     logger.info(f"Starting robot stub on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

@@ -2,17 +2,17 @@
   "1": {
     "id": "1",
     "name": "Робот-панда 1",
-    "url": "http://localhost:8081"
+    "url": "http://robot-panda-stub-1:8081"
   },
   "2": {
     "id": "2",
     "name": "Робот-панда 2",
-    "url": "http://localhost:8082"
+    "url": "http://robot-panda-stub-2:8082"
   },
   "3": {
     "id": "3",
     "name": "Робот-панда 3",
-    "url": "http://localhost:8083"
+    "url": "http://robot-panda-stub-3:8083"
   }
 }
 
