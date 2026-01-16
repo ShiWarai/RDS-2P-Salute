@@ -12,6 +12,7 @@ import httpx
 
 from app.services.robot_service import RobotService
 from app.services.binding_service import BindingService
+from app.services.grpc_service import initiate_binding, complete_binding_with_code, send_command_to_robot
 from app.utils.request_parser import (
     extract_utterance_chatapp,
     extract_utterance_legacy,
@@ -22,7 +23,6 @@ from app.utils.request_parser import (
     is_unbind_command
 )
 from app.utils.response_builder import create_chatapp_response, create_chatapp_response_multiple, create_legacy_response
-from app.config import get_robot_url
 
 logger = logging.getLogger(__name__)
 
@@ -32,40 +32,25 @@ router = APIRouter()
 GREETING_MESSAGE = "Привет! Я робот-панда 🐼! Скажите 'скажи роботу лежать', 'вставай' или 'равняйсь'. Для списка команд - 'помощь'."
 
 
-async def request_binding_code(user_id: str, robot_id: str) -> tuple[bool, str, Optional[str], Optional[float]]:
+async def request_binding_code(user_id: str, robot_id: str, binding_service: BindingService) -> tuple[bool, str, Optional[str], Optional[float]]:
     """
-    Запрашивает код верификации у робота
+    Запрашивает код верификации у робота через gRPC
     
     Returns:
         tuple: (успех, сообщение, код, expires_at)
     """
-    robot_url = get_robot_url(robot_id)
-    if not robot_url:
-        return False, f"Робот с номером {robot_id} не найден.", None, None
+    # Используем gRPC для инициации привязки
+    success, message = initiate_binding(user_id, robot_id, binding_service)
     
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                f"{robot_url}/bind/request",
-                json={"user_id": user_id, "robot_id": robot_id}
-            )
-            response.raise_for_status()
-            result = response.json()
-            code = result.get("code")
-            expires_at = result.get("expires_at")
-            
-            if code and expires_at:
-                return True, "Код запрошен", code, expires_at
-            else:
-                return False, "Робот не вернул код", None, None
-                
-    except httpx.ConnectError:
-        return False, "Робот временно недоступен. Попробуйте позже.", None, None
-    except httpx.TimeoutException:
-        return False, "Превышено время ожидания ответа от робота.", None, None
-    except Exception as e:
-        logger.error(f"Error requesting binding code: {e}", exc_info=True)
-        return False, "Ошибка при запросе кода", None, None
+    if success:
+        # Получаем код из состояния привязки
+        binding_state = binding_service._binding_states.get(user_id)
+        if binding_state:
+            code = binding_state.get("code")
+            expires_at = binding_state.get("expires_at")
+            return True, message, code, expires_at
+    
+    return False, message, None, None
 
 
 async def _handle_cancel_command(
@@ -108,9 +93,9 @@ async def _handle_code_input(
     
     logger.debug(f"Извлеченный код: {code}")
     if code:
-        success, message_text = binding_service.verify_binding_code(user_id, code)
+        # Используем gRPC функцию для завершения привязки
+        success, message_text = complete_binding_with_code(user_id, code, binding_service)
         if success:
-            binding_service.complete_binding(user_id)
             robot_id = binding_service.get_robot_id(user_id)
             # Возвращаем список из двух сообщений
             return [
@@ -142,11 +127,10 @@ async def _handle_bind_start(
     if not robot_id:
         return "Укажите номер робота. Например: 'привяжи робота один' или 'привяжи робота 1'.", False
     
-    # Запрашиваем код у робота
-    success, message_text, code, expires_at = await request_binding_code(user_id, robot_id)
+    # Запрашиваем код у робота через gRPC
+    success, message_text, code, expires_at = await request_binding_code(user_id, robot_id, binding_service)
     if success and code and expires_at:
-        logger.debug(f"Сохранение состояния привязки: user_id={user_id}, robot_id={robot_id}, code={code}")
-        binding_service.start_binding(user_id, robot_id, code, expires_at)
+        logger.debug(f"Состояние привязки сохранено: user_id={user_id}, robot_id={robot_id}, code={code}")
         return f"Введите 4-значный код из логов робота {robot_id}. Код действителен 5 минут. Для отмены скажите 'отмена'.", False
     else:
         return message_text, False
@@ -269,20 +253,31 @@ async def _process_command(
             finished = binding_finished
         else:
             # Проверяем, есть ли привязка для обычных команд
+            logger.info(f"Checking binding: user_id={user_id}, has_binding={binding_service.has_binding(user_id) if user_id else False}")
             if user_id and binding_service.has_binding(user_id):
-                robot_id = binding_service.get_robot_id(user_id)
-                robot_url = get_robot_url(robot_id)
-                result = await robot_service.execute_command(utterance, robot_url)
+                # Обрабатываем команду через RobotService для получения текста ответа
+                result = robot_service.process_command(utterance)
+                logger.debug(f"Command processing result: success={result.success}, motor_command={result.motor_command}, text={result.text[:50]}")
                 text = result.text
-                if result.error_message:
-                    text = f"{text} {result.error_message}"
+                
+                # Если команда распознана и требует выполнения, отправляем через gRPC
+                if result.success and result.motor_command and result.motor_command.get("function"):
+                    # Извлекаем имя функции для отправки роботу
+                    function_name = result.motor_command.get("function")
+                    logger.debug(f"Sending command to robot: function={function_name}, user_id={user_id}")
+                    success, message = send_command_to_robot(user_id, function_name, binding_service)
+                    if not success:
+                        text = f"{text} {message}"
+                else:
+                    logger.warning(f"Command not recognized or no function: success={result.success}, motor_command={result.motor_command}")
+                
                 finished = result.finished
             else:
                 text = "Сначала привяжите робота. Скажите 'привяжи робота один' или 'привяжи робота 1'."
     else:
         if is_chatapp:
             if user_id and binding_service.has_binding(user_id):
-                text = "Скажите команду для робота: 'скажи роботу лежать', 'вставай' или 'равняйсь'."
+                text = "Скажите команду для робота: 'скажи роботу лапу', 'равняйсь', 'лежать', 'бегать' и другие. Скажите 'помощь' для списка команд."
             else:
                 text = "Для управления роботом привяжите его. Скажите 'привяжи робота один' или 'привяжи робота 1'."
         else:

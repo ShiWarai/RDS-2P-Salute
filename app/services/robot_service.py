@@ -6,165 +6,109 @@ import logging
 import re
 from typing import Dict, Any, Optional
 
-try:
-    import httpx
-except ImportError:
-    httpx = None
-
 from app.models.commands import RobotCommand, CommandResult
+from app.config import CVC_SERVICE_URL
+from app.services.cvc_client import CVCClient
 
 logger = logging.getLogger(__name__)
 
-# Предкомпилированные регулярные выражения для команд (для производительности)
-_COMMAND_PATTERNS = {
-    RobotCommand.LIE_DOWN: re.compile(r"(?:лежать|ляг|лечь|приляг|усни|ложись)"),
-    RobotCommand.STAND_UP: re.compile(r"(?:вставай|встань|встать|вставать|поднимайся|поднимись)"),
-    RobotCommand.ATTENTION: re.compile(r"(?:равняйсь|равняйся|равняться|внимание|смирно)"),
-    RobotCommand.HELP: re.compile(r"(?:помощь|помоги|что\s+ты\s+умеешь|что\s+умеешь|команды|список\s+команд|что\s+можно)"),
-    RobotCommand.SILENCE: re.compile(r"(?:молчи|молчать|замолчи|хватит|стоп|прекрати\s+слушать)")
-}
+# Список команд для отображения в справке
+COMMANDS_FOR_HELP = [
+    {'trigger': 'лапу', 'function': 'give_paw'},
+    {'trigger': 'равняйсь', 'function': 'stand_at_attention'},
+    {'trigger': 'отставить', 'function': 'dismiss'},
+    {'trigger': 'вставай', 'function': 'dismiss'},
+    {'trigger': 'лежать', 'function': 'lie_down'},
+    {'trigger': ['кувырок', 'вращайся'], 'function': 'rotate'},
+    {'trigger': ['бегать', 'пошли'], 'function': 'run'},
+    {'trigger': 'смирно', 'function': 'stop_running'},
+    {'trigger': ['держи джойстик', 'возьми джойстик', 'подключись к джойстику'], 'function': 'reconnect_joystick'}
+]
+
+# Специальные команды
+_HELP_PATTERN = re.compile(r"(?:помощь|помоги|что\s+ты\s+умеешь|что\s+умеешь|команды|список\s+команд|что\s+можно)", re.IGNORECASE)
+_SILENCE_PATTERN = re.compile(r"(?:молчи|молчать|замолчи|хватит|стоп|прекрати\s+слушать)", re.IGNORECASE)
 
 
 class RobotService:
     """Сервис для управления роботом-пандой"""
     
-    def __init__(self, robot_api_url: Optional[str] = None):
+    def __init__(self, robot_api_url: Optional[str] = None, cvc_service_url: Optional[str] = None):
         """
         Инициализация сервиса робота
         
         Args:
-            robot_api_url: URL API робота для отправки команд (опционально)
+            robot_api_url: URL API робота для отправки команд (опционально, не используется с gRPC)
+            cvc_service_url: URL CVC сервиса для классификации команд (по умолчанию из конфига)
         """
         self.robot_api_url = robot_api_url
-        logger.info(f"RobotService initialized. Robot API URL: {robot_api_url or 'Not configured'}")
+        cvc_url = cvc_service_url or CVC_SERVICE_URL
+        self.cvc_client = CVCClient(base_url=cvc_url)
+        self._cvc_available = None  # Кэш для проверки доступности
+        logger.info(f"RobotService инициализирован. Robot API URL: {robot_api_url or 'Не настроен (используется gRPC)'}, CVC URL: {cvc_url}")
     
-    def parse_command(self, utterance: str) -> RobotCommand:
+    def _is_cvc_available(self) -> bool:
         """
-        Распознает команду из текста пользователя в формате "скажи роботу <действие>"
+        Проверяет доступность CVC сервиса (с кэшированием).
+        
+        Returns:
+            True если CVC доступен, False иначе
+        """
+        if self._cvc_available is None:
+            self._cvc_available = self.cvc_client.is_available()
+            if self._cvc_available:
+                logger.info("CVC сервис доступен, будет использоваться для классификации команд")
+            else:
+                logger.warning("CVC сервис недоступен - система будет сообщать об ошибках подключения")
+        return self._cvc_available
+    
+    def parse_command(self, utterance: str) -> tuple[Optional[str], RobotCommand]:
+        """
+        Распознает команду из текста пользователя через CVC сервис.
+        Если CVC недоступен, возвращает ошибку.
         
         Args:
             utterance: Текст команды пользователя
             
         Returns:
-            RobotCommand: Тип команды
+            tuple: (function_name или None, RobotCommand)
+                   function_name - имя функции для отправки роботу (например, "dismiss")
+                   RobotCommand - тип команды для внутренней обработки
         """
         utterance_lower = utterance.lower().strip()
         
-        # Извлекаем действие из фразы "скажи роботу <действие>" или "скажи роботу панде <действие>"
-        action = utterance_lower
+        # Проверяем специальные команды (работают без CVC)
+        if _HELP_PATTERN.search(utterance_lower):
+            return None, RobotCommand.HELP
         
-        # Убираем префиксы команд
-        prefixes = [
-            "скажи роботу панде",
-            "скажи роботу",
-            "скажи панде",
-            "скажи роботу панда",
-            "скажи панда",
-            "роботу панде",
-            "роботу панда",
-            "роботу",
-            "панде",
-            "панда"
-        ]
+        if _SILENCE_PATTERN.search(utterance_lower):
+            return None, RobotCommand.SILENCE
         
-        for prefix in prefixes:
-            if utterance_lower.startswith(prefix):
-                action = utterance_lower[len(prefix):].strip()
-                break
+        # Проверяем доступность CVC сервиса
+        if not self._is_cvc_available():
+            logger.error(f"CVC сервис недоступен, невозможно классифицировать команду: '{utterance_lower}'")
+            return None, RobotCommand.ERROR
         
-        # Ищем команду в извлеченном действии или в исходной фразе
-        search_text = action if action != utterance_lower else utterance_lower
-        
-        # Проверяем предкомпилированные паттерны (более эффективно, чем any() с циклом)
-        for command, pattern in _COMMAND_PATTERNS.items():
-            if pattern.search(search_text):
-                return command
-        
-        return RobotCommand.UNKNOWN
-    
-    def get_motor_command(self, command: RobotCommand) -> Dict[str, Any]:
-        """
-        Генерирует команду для моторов робота
-        
-        Args:
-            command: Тип команды
-            
-        Returns:
-            Dict с параметрами команды для моторов
-        """
-        motor_commands = {
-            RobotCommand.LIE_DOWN: {
-                "action": "lie_down",
-                "motors": {
-                    "head": {"angle": 0, "speed": 50},
-                    "body": {"angle": -90, "speed": 50},
-                    "legs": {"angle": 0, "speed": 50}
-                },
-                "duration": 2000  # миллисекунды
-            },
-            RobotCommand.STAND_UP: {
-                "action": "stand_up",
-                "motors": {
-                    "head": {"angle": 0, "speed": 50},
-                    "body": {"angle": 0, "speed": 50},
-                    "legs": {"angle": 0, "speed": 50}
-                },
-                "duration": 2000
-            },
-            RobotCommand.ATTENTION: {
-                "action": "attention",
-                "motors": {
-                    "head": {"angle": 0, "speed": 100},
-                    "body": {"angle": 0, "speed": 100},
-                    "legs": {"angle": 0, "speed": 100}
-                },
-                "duration": 1000
-            }
-        }
-        
-        return motor_commands.get(command, {})
-    
-    async def send_command_to_robot(self, motor_command: Dict[str, Any], robot_url: Optional[str] = None) -> bool:
-        """
-        Отправляет команду на моторы робота
-        
-        Args:
-            motor_command: Команда для моторов
-            robot_url: URL робота (если не указан, используется self.robot_api_url)
-            
-        Returns:
-            bool: True если команда успешно отправлена
-        """
-        # Используем переданный URL или URL по умолчанию
-        url = robot_url or self.robot_api_url
-        
-        if not url:
-            logger.warning("Robot API URL not configured. Command logged but not sent.")
-            logger.debug(f"Motor command (not sent): {motor_command}")
-            return False
-        
-        if httpx is None:
-            logger.error("httpx not installed. Cannot send command to robot.")
-            return False
-        
+        # Используем CVC сервис для классификации (передаем полный текст, CVC сам обработает префиксы)
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.post(
-                    f"{url}/motors/command",
-                    json=motor_command
-                )
-                response.raise_for_status()
-                logger.info(f"Command sent to robot successfully")
-                return True
-        except httpx.ConnectError:
-            logger.error(f"Failed to connect to robot at {url}")
-            return False
-        except httpx.TimeoutException:
-            logger.error(f"Timeout while connecting to robot at {url}")
-            return False
+            result = self.cvc_client.predict(utterance_lower, return_confidence=True)
+            if result and result.get("command"):
+                command = result.get("command")
+                confidence = result.get("confidence", 0.0)
+                
+                # Игнорируем "unknown" команды от CVC
+                if command != "unknown":
+                    logger.debug(f"CVC классифицировал '{utterance_lower}' -> '{command}' (уверенность: {confidence:.3f})")
+                    return command, RobotCommand.UNKNOWN
+                else:
+                    logger.debug(f"CVC классифицировал '{utterance_lower}' как 'unknown'")
+                    return None, RobotCommand.UNKNOWN
+            else:
+                logger.warning(f"CVC вернул пустой результат для '{utterance_lower}'")
+                return None, RobotCommand.ERROR
         except Exception as e:
-            logger.error(f"Failed to send command to robot: {e}", exc_info=True)
-            return False
+            logger.error(f"Ошибка классификации CVC для '{utterance_lower}': {e}")
+            return None, RobotCommand.ERROR
     
     def process_command(self, utterance: str) -> CommandResult:
         """
@@ -176,65 +120,54 @@ class RobotService:
         Returns:
             CommandResult: Результат обработки команды
         """
-        command = self.parse_command(utterance)
+        function_name, command_type = self.parse_command(utterance)
         
-        # Определяем текст ответа пользователю (для робота-панды)
-        if command == RobotCommand.HELP:
-            text = (
-                "Доступные команды:\n"
-                "• Команда \"Скажи роботу лежать\";\n"
-                "• Команда \"Скажи роботу вставай\";\n"
-                "• Команда \"Скажи роботу равняйсь\";\n"
-                "• Команда \"Привяжи робота один\" (или два, три и т.д.);\n"
-                "• Команда \"Отвяжи робота\";\n"
-                "• Команда \"Помощь\";\n"
-                "• Команда \"Молчи\"."
-            )
-        elif command == RobotCommand.SILENCE:
+        # Определяем текст ответа пользователю
+        if command_type == RobotCommand.HELP:
+            # Формируем список команд из единого хранилища
+            help_lines = ["Доступные команды:"]
+            for cmd in COMMANDS_FOR_HELP:
+                triggers = cmd['trigger'] if isinstance(cmd['trigger'], list) else [cmd['trigger']]
+                if len(triggers) > 1:
+                    triggers_str = " или ".join([f"'{t}'" for t in triggers])
+                    help_lines.append(f"• Скажи роботу {triggers_str};")
+                else:
+                    help_lines.append(f"• Скажи роботу '{triggers[0]}';")
+            help_lines.extend([
+                "• Команда 'Привяжи робота один' (или два, три и т.д.);",
+                "• Команда 'Отвяжи робота';",
+                "• Команда 'Помощь';",
+                "• Команда 'Молчи'."
+            ])
+            text = "\n".join(help_lines)
+        elif command_type == RobotCommand.SILENCE:
             text = "Хорошо, помолчим. 🐼👋"
-        else:
+        elif command_type == RobotCommand.ERROR:
+            text = "Извините, сервис классификации команд временно недоступен. Пожалуйста, попробуйте позже."
+        elif function_name:
+            # Команда распознана - определяем ответ пользователю по function
             response_texts = {
-                RobotCommand.LIE_DOWN: "Панда ложится отдыхать! 🐼💤",
-                RobotCommand.STAND_UP: "Панда встаёт! 🐼✨",
-                RobotCommand.ATTENTION: "Панда выравнивается по стойке смирно! 🐼🎖️",
-                RobotCommand.UNKNOWN: "Хм, панда не поняла команду. Скажите 'помощь' для списка команд."
+                'give_paw': "Робот поднимает лапу! 🐾",
+                'stand_at_attention': "Робот равняется! 🎖️",
+                'dismiss': "Робот встаёт! ✨",
+                'lie_down': "Робот ложится! 💤",
+                'rotate': "Робот делает кувырок! 🤸",
+                'run': "Робот начинает бегать! 🏃",
+                'stop_running': "Робот останавливается! 🛑",
+                'reconnect_joystick': "Робот подключается к джойстику! 🎮"
             }
-            text = response_texts.get(command, "Не понял команду.")
+            text = response_texts.get(function_name, f"Команда '{function_name}' отправлена роботу.")
+        else:
+            text = "Хм, робот не понял команду. Скажите 'помощь' для списка команд."
         
-        # Генерируем команду для моторов (только для команд, требующих движения)
-        motor_command = self.get_motor_command(command) if command not in (RobotCommand.UNKNOWN, RobotCommand.HELP, RobotCommand.SILENCE) else None
-        
-        if motor_command:
-            logger.debug(f"Command recognized: {command.value}")
+        # Генерируем команду для отправки роботу (function на английском)
+        command_text = function_name if function_name else None
         
         return CommandResult(
-            command=command,
+            command=command_type,
             text=text,
-            motor_command=motor_command,
-            success=command != RobotCommand.UNKNOWN,
-            finished=(command == RobotCommand.SILENCE)  # Завершаем сессию только по команде "молчи"
+            motor_command={"function": command_text} if command_text else None,
+            success=function_name is not None or command_type in (RobotCommand.HELP, RobotCommand.SILENCE),
+            finished=(command_type == RobotCommand.SILENCE),
+            error_message=text if command_type == RobotCommand.ERROR else None
         )
-    
-    async def execute_command(self, utterance: str, robot_url: Optional[str] = None) -> CommandResult:
-        """
-        Выполняет команду: обрабатывает и отправляет на робота
-        
-        Args:
-            utterance: Текст команды пользователя
-            robot_url: URL робота конкретного пользователя (опционально)
-            
-        Returns:
-            CommandResult: Результат выполнения команды
-        """
-        result = self.process_command(utterance)
-        
-        # Если команда распознана, отправляем на робота
-        if result.success and result.motor_command:
-            send_success = await self.send_command_to_robot(result.motor_command, robot_url)
-            if not send_success:
-                result.error_message = "Не удалось отправить команду роботу"
-                logger.warning(f"Command execution failed: {result.error_message}")
-        
-        return result
-
-

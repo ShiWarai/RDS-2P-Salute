@@ -678,36 +678,30 @@ docker compose logs -f robot-1
 
 ### Настройка через Nginx
 
-Проект настроен для работы через Nginx с SSL сертификатом. Пример конфигурации:
+Проект использует Nginx Proxy Manager для проксирования HTTP API. gRPC работает напрямую на порту 50051.
 
-1. **Nginx конфигурация** (`/etc/nginx/sites-available/salute.ridramecraft.ru`):
-   ```nginx
-   server {
-       server_name salute.ridramecraft.ru;
-       
-       location / {
-           proxy_pass http://127.0.0.1:20000;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-           proxy_set_header X-Forwarded-Proto $scheme;
-       }
-       
-       listen 443 ssl;
-       ssl_certificate /etc/letsencrypt/live/salute.ridramecraft.ru/fullchain.pem;
-       ssl_certificate_key /etc/letsencrypt/live/salute.ridramecraft.ru/privkey.pem;
-   }
-   ```
+#### HTTP API (FastAPI)
 
-2. **Настройка SSL через Certbot:**
-   ```bash
-   certbot --nginx -d salute.ridramecraft.ru
-   ```
+Настроено через Nginx Proxy Manager:
+- **Домен:** `salute.robotics-rtuitlab.ru`
+- **Прокси на:** `127.0.0.1:20000`
+- **SSL:** настроен через Let's Encrypt
 
-3. **Endpoint для SmartApp Studio:**
-   ```
-   https://salute.ridramecraft.ru/v1/webhook
-   ```
+**Endpoint для SmartApp Studio:**
+```
+https://salute.robotics-rtuitlab.ru/v1/webhook
+```
+
+#### gRPC для роботов
+
+Роботы подключаются напрямую к серверу:
+- **Адрес:** `77.232.130.196:50051` (или IP вашего сервера)
+- **Протокол:** `grpc://` (insecure) или `grpcs://` (с TLS)
+- **Метод:** `robot.RobotCommandService/StreamCommands`
+
+**Рекомендация:** Используйте прямое подключение роботов к порту 50051. Это проще и не требует дополнительной настройки nginx.
+
+Подробная инструкция по настройке nginx для gRPC (если требуется): см. `NGINX_GRPC_SETUP.md`
 
 ## Примечания
 

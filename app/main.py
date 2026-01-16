@@ -2,13 +2,14 @@
 Главный файл приложения FastAPI
 """
 import logging
+import threading
 import uvicorn
 from fastapi import FastAPI
 
 from app.api.routes import router
 from app.services.robot_service import RobotService
 from app.services.binding_service import BindingService
-from app.config import load_robots_config
+from app.services.grpc_service import serve_grpc
 
 # Настройка логирования
 import os
@@ -37,12 +38,20 @@ logger = logging.getLogger(__name__)
 # Создание приложения FastAPI
 app = FastAPI(title="Robot Panda SmartApp API", version="1.0.0")
 
-# Загрузка конфигурации
-load_robots_config()
-
 # Инициализация сервисов (глобальные экземпляры)
 robot_service = RobotService()
 binding_service = BindingService()
+
+# Запуск gRPC сервера в отдельном потоке
+grpc_port = 50051
+grpc_thread = threading.Thread(
+    target=serve_grpc,
+    args=(binding_service, grpc_port),
+    daemon=True,
+    name="gRPC-Server"
+)
+grpc_thread.start()
+logger.info(f"gRPC server thread started on port {grpc_port}")
 
 # Подключение роутеров
 app.include_router(router)

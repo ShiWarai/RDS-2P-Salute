@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Скрипт для остановки всех роботов и главного приложения
+# Скрипт для остановки главного приложения
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "🛑 Остановка всех сервисов Robot Panda..."
+echo "🛑 Остановка сервиса Robot Panda..."
 
 # Функция для остановки процесса по PID файлу
 stop_service() {
@@ -35,14 +35,8 @@ stop_service() {
     fi
 }
 
-# Останавливаем роботов
-stop_service "robot_1"
-stop_service "robot_2"
-stop_service "robot_3"
-
 # Останавливаем главное приложение
 stop_service "main_app"
 
 echo ""
-echo "✅ Все сервисы остановлены!"
-
+echo "✅ Сервис остановлен!"

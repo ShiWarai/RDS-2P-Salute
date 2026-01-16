@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     build:
@@ -8,15 +6,17 @@ services:
     container_name: robot-panda-app
     ports:
       - "20000:8000"
+      - "50051:50051"
     volumes:
       - ./config:/app/config:ro
       - ./data:/app/data
       - ./logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1
+      - CVC_SERVICE_URL=http://cvc-api:20001
     restart: unless-stopped
     networks:
-      - robot-panda-network
+      - robot-services-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -24,66 +24,6 @@ services:
       retries: 3
       start_period: 40s
 
-  robot-1:
-    build:
-      context: .
-      dockerfile: robot_stub/Dockerfile
-    container_name: robot-panda-stub-1
-    ports:
-      - "8081:8081"
-    environment:
-      - ROBOT_ID=1
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
-    networks:
-      - robot-panda-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
-  robot-2:
-    build:
-      context: .
-      dockerfile: robot_stub/Dockerfile
-    container_name: robot-panda-stub-2
-    ports:
-      - "8082:8082"
-    environment:
-      - ROBOT_ID=2
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
-    networks:
-      - robot-panda-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
-  robot-3:
-    build:
-      context: .
-      dockerfile: robot_stub/Dockerfile
-    container_name: robot-panda-stub-3
-    ports:
-      - "8083:8083"
-    environment:
-      - ROBOT_ID=3
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
-    networks:
-      - robot-panda-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
 networks:
-  robot-panda-network:
-    driver: bridge
+  robot-services-network:
+    external: true

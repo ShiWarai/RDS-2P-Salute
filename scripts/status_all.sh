@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Скрипт для проверки статуса всех сервисов
+# Скрипт для проверки статуса сервиса
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "📊 Статус сервисов Robot Panda:"
+echo "📊 Статус сервиса Robot Panda:"
 echo ""
 
 # Функция для проверки статуса процесса
@@ -43,10 +43,7 @@ check_status() {
     fi
 }
 
-check_status "robot_1" "8081"
-check_status "robot_2" "8082"
-check_status "robot_3" "8083"
 check_status "main_app" "8000"
-
 echo ""
-
+echo "💡 gRPC сервер работает на порту 50051 (внутри процесса main_app)"
+echo ""

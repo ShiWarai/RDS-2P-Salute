@@ -14,6 +14,7 @@ class RobotCommand(Enum):
     HELP = "help"  # Помощь
     SILENCE = "silence"  # Молчи - завершить прослушивание
     UNKNOWN = "unknown"  # Неизвестная команда
+    ERROR = "error"  # Ошибка (например, CVC недоступен)
 
 
 @dataclass
