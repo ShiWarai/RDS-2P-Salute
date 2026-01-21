@@ -98,13 +98,13 @@ class RobotService:
                 
                 # Игнорируем "unknown" команды от CVC
                 if command != "unknown":
-                    logger.debug(f"CVC классифицировал '{utterance_lower}' -> '{command}' (уверенность: {confidence:.3f})")
+                    logger.info(f"CVC классифицировал '{utterance_lower}' -> '{command}' (уверенность: {confidence:.3f})")
                     return command, RobotCommand.UNKNOWN
                 else:
-                    logger.debug(f"CVC классифицировал '{utterance_lower}' как 'unknown'")
+                    logger.warning(f"CVC классифицировал '{utterance_lower}' как 'unknown'")
                     return None, RobotCommand.UNKNOWN
             else:
-                logger.warning(f"CVC вернул пустой результат для '{utterance_lower}'")
+                logger.warning(f"CVC вернул пустой результат для '{utterance_lower}': {result}")
                 return None, RobotCommand.ERROR
         except Exception as e:
             logger.error(f"Ошибка классификации CVC для '{utterance_lower}': {e}")

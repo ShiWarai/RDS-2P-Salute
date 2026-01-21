@@ -47,7 +47,7 @@ class RobotCommandServiceServicer(robot_pb2_grpc.RobotCommandServiceServicer):
         """
         self.binding_service = binding_service
         self.connection_manager = get_connection_manager()
-        logger.info("RobotCommandServiceServicer initialized")
+        logger.info("RobotCommandServiceServicer инициализирован")
     
     def StreamCommands(self, request, context):
         """
@@ -66,7 +66,7 @@ class RobotCommandServiceServicer(robot_pb2_grpc.RobotCommandServiceServicer):
         robot_id = request.robot_id
         
         if not robot_id:
-            logger.error("Robot connected without robot_id")
+            logger.error("Робот подключился без robot_id")
             yield robot_pb2.StreamMessage(
                 error=robot_pb2.ErrorMessage(
                     error_code="INVALID_REQUEST",
@@ -246,7 +246,7 @@ def send_command_to_robot(user_id: str, command_text: str, binding_service: Bind
     
     # Проверяем активное соединение
     if not connection_manager.is_connected(robot_id):
-        return False, f"Робот {robot_id} не подключен"
+        return False, "Робот не подключен. Пожалуйста, подождите, пока робот подключится."
     
     # Создаем команду
     command_message = robot_pb2.StreamMessage(
@@ -263,7 +263,7 @@ def send_command_to_robot(user_id: str, command_text: str, binding_service: Bind
         return True, "Команда отправлена"
     else:
         logger.error(f"Ошибка отправки команды: user_id={user_id}, robot_id={robot_id}")
-        return False, f"Ошибка отправки команды роботу {robot_id}"
+        return False, "Не удалось отправить команду роботу. Попробуйте позже."
 
 
 def serve_grpc(binding_service: BindingService, port: int = 50051):

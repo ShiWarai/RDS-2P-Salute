@@ -156,25 +156,7 @@ export ROBOT_API_URL="http://robot-ip:port"
 
 ### 5. Запуск сервера
 
-**Рекомендуемый способ: Systemd Service (работает в фоне)**
-
-```bash
-# Запуск сервиса
-./scripts/start_service.sh
-
-# Остановка сервиса
-./scripts/stop_service.sh
-
-# Перезапуск сервиса
-./scripts/restart_service.sh
-
-# Проверка статуса
-./scripts/status_service.sh
-```
-
-Сервис автоматически запустится при перезагрузке сервера.
-
-**Альтернатива: Ручной запуск (для разработки)**
+**Ручной запуск (для разработки)**
 ```bash
 # Активируйте виртуальное окружение
 source .venv/bin/activate
@@ -186,8 +168,7 @@ uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 Сервер будет доступен по адресу `http://0.0.0.0:8000`
 
 **Остановка:**
-- Если запущен через systemd: `./scripts/stop_service.sh`
-- Если запущен вручную: нажмите `Ctrl+C` в терминале
+- Нажмите `Ctrl+C` в терминале
 
 ### 6. Проверка работы
 
@@ -414,14 +395,6 @@ RDS-2P-Salute/
 │   ├── .gitkeep
 │   ├── user_robot_bindings.json  # Постоянные привязки (автосоздается)
 │   └── binding_states.json        # Временные состояния (автосоздается)
-├── robot_stub/            # Заглушка робота для тестирования
-│   ├── __init__.py
-│   └── main.py            # FastAPI сервер-заглушка
-├── scripts/               # Скрипты управления
-│   ├── start_service.sh
-│   ├── stop_service.sh
-│   ├── restart_service.sh
-│   └── status_service.sh
 ├── robot_stub/            # Заглушка робота для тестирования
 │   ├── __init__.py
 │   ├── main.py            # FastAPI сервер-заглушка

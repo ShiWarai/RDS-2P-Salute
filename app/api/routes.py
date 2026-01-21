@@ -253,23 +253,29 @@ async def _process_command(
             finished = binding_finished
         else:
             # Проверяем, есть ли привязка для обычных команд
-            logger.info(f"Checking binding: user_id={user_id}, has_binding={binding_service.has_binding(user_id) if user_id else False}")
+            logger.info(f"Проверка привязки: user_id={user_id}, has_binding={binding_service.has_binding(user_id) if user_id else False}")
             if user_id and binding_service.has_binding(user_id):
                 # Обрабатываем команду через RobotService для получения текста ответа
                 result = robot_service.process_command(utterance)
-                logger.debug(f"Command processing result: success={result.success}, motor_command={result.motor_command}, text={result.text[:50]}")
-                text = result.text
                 
                 # Если команда распознана и требует выполнения, отправляем через gRPC
                 if result.success and result.motor_command and result.motor_command.get("function"):
                     # Извлекаем имя функции для отправки роботу
                     function_name = result.motor_command.get("function")
-                    logger.debug(f"Sending command to robot: function={function_name}, user_id={user_id}")
+                    logger.info(f"Отправка команды роботу: function={function_name}, user_id={user_id}")
                     success, message = send_command_to_robot(user_id, function_name, binding_service)
-                    if not success:
-                        text = f"{text} {message}"
+                    if success:
+                        # Команда успешно отправлена - используем текст об успехе
+                        text = result.text
+                    else:
+                        # Команда не отправлена - показываем ТОЛЬКО сообщение об ошибке (без текста об успехе)
+                        # ВАЖНО: полностью заменяем text на message, не объединяем!
+                        text = message
                 else:
-                    logger.warning(f"Command not recognized or no function: success={result.success}, motor_command={result.motor_command}")
+                    # Команды HELP, SILENCE или нераспознанные команды - используем текст из result
+                    text = result.text
+                    if not result.success:
+                        logger.warning(f"Команда не распознана или нет функции: success={result.success}, motor_command={result.motor_command}")
                 
                 finished = result.finished
             else:
@@ -328,7 +334,7 @@ async def webhook(
         logger.debug(json.dumps(data, ensure_ascii=False, indent=2))
         
     except Exception as e:
-        logger.error(f"Error parsing JSON: {e}", exc_info=True)
+        logger.error(f"Ошибка парсинга JSON: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     try:
@@ -357,9 +363,10 @@ async def webhook(
             log_user_command(user_visible_text, utterance, user_id)
             
             # Детальная информация только в DEBUG режиме
-            logger.debug(f"Все варианты текста: original='{message.get('original_text', '')}', "
+            logger.debug(f"Варианты текста: original='{message.get('original_text', '')}', "
                         f"human_normalized='{message.get('human_normalized_text', '')}', "
-                        f"normalized='{message.get('normalized_text', '')}'")
+                        f"normalized='{message.get('normalized_text', '')}', "
+                        f"utterance для обработки='{utterance}'")
             
             # Если в utterance есть num_token, заменяем на число из токенов
             # Это нужно сделать ПЕРВЫМ, до других обработок
@@ -450,7 +457,7 @@ async def webhook(
         )
         
     except Exception as e:
-        logger.error(f"Error processing request: {e}", exc_info=True)
+        logger.error(f"Ошибка обработки запроса: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
@@ -494,6 +501,6 @@ async def robot_command(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in robot command endpoint: {e}", exc_info=True)
+        logger.error(f"Ошибка в endpoint команды робота: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
