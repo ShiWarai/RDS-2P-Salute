@@ -146,7 +146,7 @@ def initiate_binding(user_id: str, robot_id: str, binding_service: BindingServic
     
     # Генерируем 4-значный код привязки
     code = str(random.randint(1000, 9999))
-    expires_at = int(time.time()) + 300  # 5 минут
+    expires_at = time.time() + 300  # 5 минут
     
     # Сохраняем состояние привязки
     binding_service.start_binding(
@@ -177,7 +177,7 @@ def initiate_binding(user_id: str, robot_id: str, binding_service: BindingServic
         connection_manager.send_message(robot_id, status_message)
         return True, f"Код привязки отправлен роботу: {code}"
     else:
-        return False, f"Не удалось отправить код роботу {robot_id}"
+        return False, f"Не удалось отправить код."
 
 
 def complete_binding_with_code(user_id: str, code: str, binding_service: BindingService) -> Tuple[bool, str]:
@@ -246,7 +246,7 @@ def send_command_to_robot(user_id: str, command_text: str, binding_service: Bind
     
     # Проверяем активное соединение
     if not connection_manager.is_connected(robot_id):
-        return False, "Робот не подключен. Пожалуйста, подождите, пока робот подключится."
+        return False, "Робот не подключен."
     
     # Создаем команду
     command_message = robot_pb2.StreamMessage(
@@ -263,7 +263,7 @@ def send_command_to_robot(user_id: str, command_text: str, binding_service: Bind
         return True, "Команда отправлена"
     else:
         logger.error(f"Ошибка отправки команды: user_id={user_id}, robot_id={robot_id}")
-        return False, "Не удалось отправить команду роботу. Попробуйте позже."
+        return False, "Не удалось отправить команду."
 
 
 def serve_grpc(binding_service: BindingService, port: int = 50051):

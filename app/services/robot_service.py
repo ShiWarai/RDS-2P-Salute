@@ -3,7 +3,6 @@
 Обрабатывает голосовые команды и отправляет их на моторы робота.
 """
 import logging
-import re
 from typing import Dict, Any, Optional
 
 from app.models.commands import RobotCommand, CommandResult
@@ -24,10 +23,6 @@ COMMANDS_FOR_HELP = [
     {'trigger': 'смирно', 'function': 'stop_running'},
     {'trigger': ['держи джойстик', 'возьми джойстик', 'подключись к джойстику'], 'function': 'reconnect_joystick'}
 ]
-
-# Специальные команды
-_HELP_PATTERN = re.compile(r"(?:помощь|помоги|что\s+ты\s+умеешь|что\s+умеешь|команды|список\s+команд|что\s+можно)", re.IGNORECASE)
-_SILENCE_PATTERN = re.compile(r"(?:молчи|молчать|замолчи|хватит|стоп|прекрати\s+слушать)", re.IGNORECASE)
 
 
 class RobotService:
@@ -65,6 +60,7 @@ class RobotService:
     def parse_command(self, utterance: str) -> tuple[Optional[str], RobotCommand]:
         """
         Распознает команду из текста пользователя через CVC сервис.
+        Сначала обращается к CVC классификатору, затем обрабатывает служебные команды.
         Если CVC недоступен, возвращает ошибку.
         
         Args:
@@ -77,13 +73,6 @@ class RobotService:
         """
         utterance_lower = utterance.lower().strip()
         
-        # Проверяем специальные команды (работают без CVC)
-        if _HELP_PATTERN.search(utterance_lower):
-            return None, RobotCommand.HELP
-        
-        if _SILENCE_PATTERN.search(utterance_lower):
-            return None, RobotCommand.SILENCE
-        
         # Проверяем доступность CVC сервиса
         if not self._is_cvc_available():
             logger.error(f"CVC сервис недоступен, невозможно классифицировать команду: '{utterance_lower}'")
@@ -95,6 +84,20 @@ class RobotService:
             if result and result.get("command"):
                 command = result.get("command")
                 confidence = result.get("confidence", 0.0)
+                
+                # Обрабатываем служебные команды, которые возвращает CVC
+                if command == "help":
+                    logger.info(f"CVC классифицировал '{utterance_lower}' -> 'help' (уверенность: {confidence:.3f})")
+                    return None, RobotCommand.HELP
+                
+                if command == "silence":
+                    logger.info(f"CVC классифицировал '{utterance_lower}' -> 'silence' (уверенность: {confidence:.3f})")
+                    return None, RobotCommand.SILENCE
+                
+                # Команды привязки (bind, unbind, cancel) возвращаем как function_name для обработки в routes.py
+                if command in ["bind", "unbind", "cancel"]:
+                    logger.info(f"CVC классифицировал '{utterance_lower}' -> '{command}' (уверенность: {confidence:.3f})")
+                    return command, RobotCommand.UNKNOWN
                 
                 # Игнорируем "unknown" команды от CVC
                 if command != "unknown":

@@ -26,12 +26,12 @@ RUN python3 -m grpc_tools.protoc -I./grpc_proto --python_out=./grpc_proto --grpc
 COPY app/ ./app/
 COPY config/ ./config/
 
-# Создание директорий для данных и логов
-RUN mkdir -p /app/data /app/logs
+# Создание директории для логов
+RUN mkdir -p /app/logs
 
 # Expose порты приложения
 EXPOSE 8000
 EXPOSE 50051
 
 # Команда запуска
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]

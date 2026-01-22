@@ -236,7 +236,7 @@ curl http://localhost:8000/
    - Базовый образ: `python:3.10-slim`
    - Внутренний порт: 8000
    - Внешний порт: 20000 (настраивается в docker-compose.yml)
-   - Volumes: `config/`, `data/`, `logs/`
+   - Volumes: `config/`, `logs/`
 
 2. **Заглушки роботов** (`robot_stub/Dockerfile`)
    - Базовый образ: `python:3.10-slim`
@@ -298,7 +298,6 @@ docker compose down -v
 Docker Compose монтирует следующие директории:
 
 - `./config:/app/config:ro` - конфигурация (read-only)
-- `./data:/app/data` - данные привязок и состояний
 - `./logs:/app/logs` - логи приложения
 
 ### Health Checks
@@ -391,10 +390,6 @@ RDS-2P-Salute/
 │       └── response_builder.py  # Построение ответов
 ├── config/                # Конфигурационные файлы
 │   └── robots.json        # Конфигурация доступных роботов
-├── data/                  # Данные (привязки, состояния)
-│   ├── .gitkeep
-│   ├── user_robot_bindings.json  # Постоянные привязки (автосоздается)
-│   └── binding_states.json        # Временные состояния (автосоздается)
 ├── robot_stub/            # Заглушка робота для тестирования
 │   ├── __init__.py
 │   ├── main.py            # FastAPI сервер-заглушка

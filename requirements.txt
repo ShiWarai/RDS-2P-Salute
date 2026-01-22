@@ -3,3 +3,5 @@ uvicorn
 httpx
 grpcio
 grpcio-tools
+redis
+hiredis

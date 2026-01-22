@@ -1,4 +1,21 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: rds-2p-salute-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - robot-services-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     build:
       context: .
@@ -10,12 +27,15 @@ services:
     volumes:
       - ./app:/app/app
       - ./config:/app/config:ro
-      - ./data:/app/data
       - ./logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1
       - CVC_SERVICE_URL=http://cvc-api:20001
+      - REDIS_URL=redis://redis:6379/0
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - robot-services-network
     healthcheck:
@@ -24,6 +44,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  redis_data:
 
 networks:
   robot-services-network:
