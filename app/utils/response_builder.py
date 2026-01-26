@@ -1,15 +1,30 @@
 """
 Утилиты для создания ответов SmartApp API
 """
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 def create_chatapp_response(
     data: Dict[str, Any],
     text: str,
-    finished: bool = False
+    finished: bool = False,
+    auto_listening: Optional[bool] = None,
+    show_suggestions: bool = True
 ) -> Dict[str, Any]:
-    """Создает ответ в формате ChatApp API с автопрослушиванием"""
+    """
+    Создает ответ в формате ChatApp API с автопрослушиванием
+    
+    Args:
+        data: Данные входящего запроса
+        text: Текст ответа
+        finished: Флаг завершения сессии (если True, сессия полностью завершается)
+        auto_listening: Флаг автопрослушивания (если None, определяется автоматически:
+                       True если finished=False, False если finished=True)
+    
+    Примечание: SmartApp API имеет встроенный таймаут сессии (обычно 30-60 секунд).
+    Мы не можем продлить сессию программно, так как сервер не может инициировать запросы.
+    Единственный способ поддерживать сессию - чтобы пользователь периодически что-то говорил.
+    """
     payload = {
         "items": [{
             "bubble": {
@@ -22,9 +37,35 @@ def create_chatapp_response(
         "finished": finished
     }
     
-    # Включаем автопрослушивание только если сессия не завершается
+    # Определяем автопрослушивание
+    if auto_listening is None:
+        # По умолчанию: включаем автопрослушивание только если сессия не завершается
+        auto_listening = not finished
+    else:
+        # Явно заданное значение (для команды "молчи" можно установить False)
+        pass
+    
+    # Устанавливаем автопрослушивание только если сессия не завершена
+    # ВАЖНО: auto_listening=True не предотвращает таймаут сессии!
+    # Таймаут контролируется платформой SmartApp API и обычно составляет 30-60 секунд
     if not finished:
-        payload["auto_listening"] = True
+        payload["auto_listening"] = auto_listening
+        
+        # Добавляем визуальные подсказки для напоминания пользователю о навыке
+        # Это не решает проблему таймаута, но улучшает UX и может помочь
+        # пользователю понять, что навык активен и готов к командам
+        if show_suggestions:
+            payload["suggestions"] = {
+                "buttons": [
+                    {
+                        "title": "Помощь",
+                        "action": {
+                            "text": "помощь",
+                            "type": "text"
+                        }
+                    }
+                ]
+            }
     
     return {
         "messageId": data.get("messageId"),

@@ -127,6 +127,16 @@ class ProcessCommandUseCase:
         finished = False
         text_or_messages: Union[str, List[str]] = ""
         
+        # Определяем состояния пользователя заранее, чтобы использовать их при формировании ответа
+        has_binding_state = False
+        has_help_state = False
+        has_command_detail_state = False
+        
+        if request.user_id:
+            has_binding_state = self.user_repository.has_user_state(request.user_id, UserState.WAITING_CODE)
+            has_help_state = self.user_repository.has_user_state(request.user_id, UserState.WAITING_HELP_SECTION)
+            has_command_detail_state = self.user_repository.has_user_state(request.user_id, UserState.WAITING_COMMAND_DETAIL)
+        
         if request.is_new_session or (request.is_chatapp and request.intent == "run_app" and not request.utterance):
             # Новая сессия - проверяем привязку
             if request.user_id and self.binding_repository.has_binding(request.user_id):
@@ -135,16 +145,6 @@ class ProcessCommandUseCase:
             else:
                 text_or_messages = "Привяжите робота. Скажите 'привяжи робота 1' или 'привяжи панду 2'."
         elif request.utterance:
-            # Проверяем состояние пользователя
-            has_binding_state = False
-            has_help_state = False
-            has_command_detail_state = False
-            
-            if request.user_id:
-                has_binding_state = self.user_repository.has_user_state(request.user_id, UserState.WAITING_CODE)
-                has_help_state = self.user_repository.has_user_state(request.user_id, UserState.WAITING_HELP_SECTION)
-                has_command_detail_state = self.user_repository.has_user_state(request.user_id, UserState.WAITING_COMMAND_DETAIL)
-            
             # Если в режиме привязки (waiting_code) - обрабатываем с поддержкой помощи
             if has_binding_state:
                 text_or_messages, finished = await self._handle_binding_mode(
@@ -181,7 +181,21 @@ class ProcessCommandUseCase:
             # Одно сообщение
             text = text_or_messages
             if request.is_chatapp:
-                response_payload = create_chatapp_response(request.data, text, finished)
+                # Для команды "молчи" отключаем автопрослушивание (пауза диалога)
+                auto_listening = None
+                show_suggestions = False
+                
+                if "помолчим" in text.lower() and not finished:
+                    auto_listening = False
+                # Не показываем подсказки в режиме помощи или привязки
+                elif has_help_state or has_command_detail_state or has_binding_state:
+                    pass  # show_suggestions уже False
+                # Показываем подсказки только после успешных команд робота
+                # (определяем по тексту ответа из COMMANDS - содержит эмодзи и описание действия)
+                elif any(emoji in text for emoji in ["🐾", "🎖️", "✨", "💤", "🤸", "🏃", "🛑", "🎮"]) and not finished:
+                    show_suggestions = True
+                
+                response_payload = create_chatapp_response(request.data, text, finished, auto_listening, show_suggestions)
             else:
                 response_payload = create_legacy_response(text, request.session or {}, request.version, finished)
         
@@ -335,7 +349,9 @@ class ProcessCommandUseCase:
                 return self.get_help_uc.get_help_menu(), False
         
         if function_name == "silence":
-            return "Хорошо, помолчим. 🐼👋", True
+            # Команда "молчи" ставит диалог на паузу (finished=False, но auto_listening=False)
+            # Это позволяет навыку остаться активным, но не слушать дальше
+            return "Хорошо, помолчим. 🐼👋", False
         
         # Обрабатываем команды привязки/отвязки
         if function_name == "bind":
