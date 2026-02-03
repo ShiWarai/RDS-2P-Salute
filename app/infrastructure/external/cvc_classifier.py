@@ -34,7 +34,7 @@ class CVCCClassifier(ICommandClassifier):
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
-                    f"{self.base_url}/predict",
+                    f"{self.base_url}/v1/predict",
                     json={"text": utterance, "return_confidence": True}
                 )
                 response.raise_for_status()
@@ -56,7 +56,7 @@ class CVCCClassifier(ICommandClassifier):
         if self._available is None:
             try:
                 with httpx.Client(timeout=self.timeout) as client:
-                    response = client.get(f"{self.base_url}/health")
+                    response = client.get(f"{self.base_url}/v1/health")
                     self._available = response.status_code == 200
                     if self._available:
                         logger.info("CVC сервис доступен, будет использоваться для классификации команд")
