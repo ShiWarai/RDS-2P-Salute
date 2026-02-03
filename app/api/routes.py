@@ -1,6 +1,7 @@
 """
 API маршруты для SmartApp
 """
+import ipaddress
 import json
 import logging
 import re
@@ -33,6 +34,7 @@ def get_process_command_use_case() -> ProcessCommandUseCase:
     try:
         from app.infrastructure.persistence.redis_user_repository import RedisUserRepository
         from app.infrastructure.persistence.redis_binding_repository import RedisBindingRepository
+        from app.infrastructure.persistence.redis_command_feedback_repository import RedisCommandFeedbackRepository
         from app.infrastructure.external.cvc_classifier import CVCCClassifier
         from app.infrastructure.external.grpc_robot_connector import GrpcRobotConnector
         from app.application.use_cases.bind_robot import BindRobotUseCase
@@ -40,10 +42,14 @@ def get_process_command_use_case() -> ProcessCommandUseCase:
         from app.application.use_cases.get_help import GetHelpUseCase
         from app.application.use_cases.handle_binding_flow import HandleBindingFlowUseCase
         from app.infrastructure.config.settings import settings
-        
+
         # Создаём репозитории
         user_repository = RedisUserRepository(settings.REDIS_URL)
         binding_repository = RedisBindingRepository(settings.REDIS_URL)
+        command_feedback_repository = RedisCommandFeedbackRepository(
+            settings.REDIS_URL,
+            last_command_ttl=settings.LAST_COMMAND_TTL_SECONDS,
+        )
         
         # Создаём внешние сервисы
         command_classifier = CVCCClassifier(settings.CVC_SERVICE_URL, settings.CVC_TIMEOUT)
@@ -64,9 +70,10 @@ def get_process_command_use_case() -> ProcessCommandUseCase:
             bind_robot_uc=bind_robot_uc,
             unbind_robot_uc=unbind_robot_uc,
             get_help_uc=get_help_uc,
-            handle_binding_flow_uc=handle_binding_flow_uc
+            handle_binding_flow_uc=handle_binding_flow_uc,
+            command_feedback_repository=command_feedback_repository,
         )
-        
+
         return process_command_uc
     except Exception as e:
         logger.error(f"Ошибка создания ProcessCommandUseCase: {e}", exc_info=True)
@@ -259,14 +266,72 @@ async def webhook(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.get("/")
+@router.get("/v1/")
 async def root():
-    """Health check endpoint"""
+    """Корень API (v1)."""
     return {"status": "ok", "message": "SmartApp API is running"}
 
 
-@router.get("/health")
+@router.get("/v1/health")
 async def health():
-    """Health check endpoint"""
+    """Проверка состояния сервера."""
     return {"status": "healthy"}
+
+
+def _is_private_client_ip(request: Request) -> bool:
+    """Проверяет, что запрос пришёл с частного/локального IP (доступ только из локальной сети)."""
+    host = request.client.host if request.client else None
+    if not host:
+        return False
+    if host == "::1":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback
+    except ValueError:
+        return False
+
+
+def require_local_network(request: Request) -> None:
+    """Зависимость: разрешает доступ только с частных IP. Иначе 403."""
+    if not _is_private_client_ip(request):
+        logger.warning("Отклонён доступ к /v1/admin/command-feedback с IP: %s", getattr(request.client, "host", None))
+        raise HTTPException(status_code=403, detail="Access allowed only from local network")
+
+
+def get_command_feedback_repository():
+    """Dependency для получения репозитория обратной связи по командам."""
+    from app.infrastructure.persistence.redis_command_feedback_repository import (
+        RedisCommandFeedbackRepository,
+    )
+    from app.infrastructure.config.settings import settings
+
+    return RedisCommandFeedbackRepository(
+        settings.REDIS_URL,
+        last_command_ttl=settings.LAST_COMMAND_TTL_SECONDS,
+    )
+
+
+@router.get("/v1/admin/command-feedback")
+async def export_command_feedback(
+    request: Request,
+    _: None = Depends(require_local_network),
+    repo=Depends(get_command_feedback_repository),
+) -> JSONResponse:
+    """
+    Выгрузка записей обратной связи по командам («исправить команду»).
+
+    Доступ только из локальной сети (частные IP). В Docker — из сети robot-services-network:
+    http://rds-2p-salute-app:8000/v1/admin/command-feedback
+    """
+    try:
+        items = repo.get_all_feedback()
+        return JSONResponse(
+            content=items,
+            media_type="application/json",
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
+    except Exception as e:
+        logger.error("Ошибка выгрузки command-feedback: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 

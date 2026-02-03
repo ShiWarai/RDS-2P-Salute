@@ -22,6 +22,9 @@ class Settings:
     CODE_EXPIRY_SECONDS: int = 300  # 5 минут
     MAX_BINDING_ATTEMPTS: int = 3
 
+    # Command feedback («исправить команду»)
+    LAST_COMMAND_TTL_SECONDS: int = int(os.getenv("LAST_COMMAND_TTL_SECONDS", "300"))
+
 
 # Глобальный экземпляр настроек
 settings = Settings()

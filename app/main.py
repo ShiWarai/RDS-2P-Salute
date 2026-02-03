@@ -53,7 +53,7 @@ grpc_thread = threading.Thread(
 grpc_thread.start()
 logger.info(f"gRPC server thread started on port {grpc_port}")
 
-# Подключение роутеров
+# Подключение роутеров (версия в пути: /v1/...)
 app.include_router(router)
 
 logger.info("Application started")

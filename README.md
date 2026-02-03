@@ -20,9 +20,9 @@ graph TD
     end
 
     subgraph "Слой предметной области (Domain)"
-        Entities[Entities: User, Robot, Command]
-        VO[Value Objects: UserState, RobotCommand, RobotId]
-        RepoInterfaces[Interfaces: IBindingRepository, IUserRepository]
+        Entities[Entities: User]
+        VO[Value Objects: UserState, RobotId, BindingCode]
+        RepoInterfaces[Interfaces: IBindingRepository, IUserRepository, ICommandFeedbackRepository]
         ServiceInterfaces[Interfaces: ICommandClassifier, IRobotConnector]
     end
 
@@ -44,7 +44,7 @@ graph TD
 
 ### Описание слоев
 
-1.  **Domain (Слой предметной области)**: Сердце приложения. Содержит бизнес-сущности (`User`, `Robot`), объекты-значения (`RobotCommand`) и интерфейсы (контракты) для доступа к данным и внешним сервисам. Не зависит ни от каких библиотек.
+1.  **Domain (Слой предметной области)**: Сердце приложения. Содержит бизнес-сущности (`User`), объекты-значения (`UserState`, `RobotId`, `BindingCode`) и интерфейсы (контракты) для доступа к данным и внешним сервисам. Не зависит ни от каких библиотек.
 2.  **Application (Слой приложения)**: Содержит Use Cases (сценарии использования), которые реализуют бизнес-логику (например, процесс привязки или логику обработки команд). Использует DTO для передачи данных.
 3.  **Infrastructure (Слой инфраструктуры)**: Реализация интерфейсов из Domain слоя. Здесь находится работа с Redis (хранение состояний и привязок), реализация gRPC сервера для подключения реальных роботов и клиент для CVC классификатора.
 4.  **Presentation (Слой представления)**: FastAPI роуты, обрабатывающие входящие вебхуки от Сбера и преобразующие их в вызовы Use Cases.
@@ -95,7 +95,7 @@ RDS-2P-Salute/
 │   │   ├── dto/            # Объекты переноса данных
 │   │   └── use_cases/      # Сценарии бизнес-логики
 │   ├── domain/             # Доменный слой: Сущности и интерфейсы
-│   │   ├── entities/       # Бизнес-сущности (User, Robot)
+│   │   ├── entities/       # Бизнес-сущности (User)
 │   │   ├── repositories/   # Интерфейсы репозиториев
 │   │   ├── services/       # Интерфейсы внешних сервисов
 │   │   └── value_objects/  # Объекты-значения (Enum, Validation)
@@ -105,8 +105,7 @@ RDS-2P-Salute/
 │   │   └── persistence/    # Репозитории Redis
 │   ├── utils/              # Общие утилиты (парсинг, билдеры ответов)
 │   ├── main.py             # Точка входа в приложение
-│   └── main_grpc.py        # Точка входа для gRPC сервера (отдельно)
-├── config/                 # Конфигурационные файлы (robots.json)
+├── config/                 # Конфигурационные файлы (опционально)
 ├── grpc_proto/             # Protobuf определения для роботов
 ├── logs/                   # Логи приложения
 ├── requirements.txt        # Зависимости
@@ -132,9 +131,10 @@ docker compose up -d
 
 ## 🔗 API Endpoints
 
-- `POST /v1/webhook` - Основной вход для SmartApp API.
-- `GET /health` - Проверка состояния сервера.
-- `GET /docs` - Swagger документация.
+- `POST /v1/webhook` — основной вход для SmartApp API.
+- `GET /v1/health` — проверка состояния сервера.
+- `GET /v1/admin/command-feedback` — выгрузка репортов «исправить команду» (доступ только из локальной сети).
+- `GET /docs` — Swagger документация.
 
 ---
 

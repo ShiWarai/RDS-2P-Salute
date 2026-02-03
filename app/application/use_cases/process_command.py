@@ -2,10 +2,12 @@
 Use Case для обработки команд пользователя
 """
 import logging
+import time
 from typing import Optional, List, Union
 
 from app.domain.repositories.binding_repository import IBindingRepository
 from app.domain.repositories.user_repository import IUserRepository
+from app.domain.repositories.command_feedback_repository import ICommandFeedbackRepository
 from app.domain.services.command_classifier import ICommandClassifier
 from app.domain.services.robot_connector import IRobotConnector
 from app.domain.value_objects.user_state import UserState
@@ -90,11 +92,12 @@ class ProcessCommandUseCase:
         bind_robot_uc: BindRobotUseCase,
         unbind_robot_uc: UnbindRobotUseCase,
         get_help_uc: GetHelpUseCase,
-        handle_binding_flow_uc: HandleBindingFlowUseCase
+        handle_binding_flow_uc: HandleBindingFlowUseCase,
+        command_feedback_repository: ICommandFeedbackRepository,
     ):
         """
         Инициализация use case
-        
+
         Args:
             user_repository: Репозиторий пользователей
             binding_repository: Репозиторий привязок
@@ -104,6 +107,7 @@ class ProcessCommandUseCase:
             unbind_robot_uc: Use case для отвязки робота
             get_help_uc: Use case для получения справки
             handle_binding_flow_uc: Use case для обработки потока привязки
+            command_feedback_repository: Репозиторий обратной связи по командам
         """
         self.user_repository = user_repository
         self.binding_repository = binding_repository
@@ -113,6 +117,7 @@ class ProcessCommandUseCase:
         self.unbind_robot_uc = unbind_robot_uc
         self.get_help_uc = get_help_uc
         self.handle_binding_flow_uc = handle_binding_flow_uc
+        self.command_feedback_repository = command_feedback_repository
     
     async def execute(self, request: CommandRequestDTO) -> CommandResponseDTO:
         """
@@ -378,13 +383,46 @@ class ProcessCommandUseCase:
         if function_name == "unbind":
             success, message = await self.unbind_robot_uc.execute(request.user_id)
             return message, False
-        
+
+        # Команда «исправить команду» — запись жалобы по последней выполненной команде
+        if function_name == "report_command":
+            if not request.user_id:
+                return "Не удалось записать. Нет данных пользователя.", False
+            if not self.binding_repository.has_binding(request.user_id):
+                return "Привяжите робота. Скажите 'привяжи робота 1' или 'привяжи панду 2'.", False
+            robot_id = self.binding_repository.get_robot_id(request.user_id)
+            if not robot_id:
+                return "Привяжите робота.", False
+            last = self.command_feedback_repository.get_last_command(request.user_id)
+            if not last:
+                return "Не найдена последняя команда. Выполните команду роботу и сразу скажите «исправить команду».", False
+            last_utterance, last_function = last
+            meta = None
+            if request.data:
+                meta = {}
+                if request.data.get("payload", {}).get("session_id"):
+                    meta["session_id"] = request.data["payload"]["session_id"]
+            self.command_feedback_repository.add_feedback(
+                user_id=request.user_id,
+                robot_id=robot_id.value,
+                user_utterance=last_utterance,
+                classified_function=last_function,
+                created_at=time.time(),
+                meta=meta,
+            )
+            self.command_feedback_repository.clear_last_command(request.user_id)
+            return "Спасибо, мы записали, что команда сработала неправильно. Разработчики посмотрят.", False
+
         # Обрабатываем команды для робота
         if request.user_id and self.binding_repository.has_binding(request.user_id):
-            if function_name and function_name not in ["help", "silence", "bind", "unbind"]:
+            if function_name and function_name not in ["help", "silence", "bind", "unbind", "report_command"]:
                 # Отправляем команду роботу
                 success, message = self.robot_connector.send_command(request.user_id, function_name)
                 if success:
+                    if request.user_id:
+                        self.command_feedback_repository.set_last_command(
+                            request.user_id, request.utterance, function_name
+                        )
                     # Используем текст ответа из COMMANDS
                     for cmd in COMMANDS:
                         if cmd['function'] == function_name:
@@ -424,7 +462,11 @@ class ProcessCommandUseCase:
                 if function == "silence":
                     logger.info(f"CVC классифицировал '{utterance_lower}' -> 'silence' (уверенность: {confidence:.3f})")
                     return {"function": "silence"}
-                
+
+                if function == "report_command":
+                    logger.info(f"CVC классифицировал '{utterance_lower}' -> 'report_command' (уверенность: {confidence:.3f})")
+                    return {"function": "report_command"}
+
                 # Команды привязки возвращаем как function_name
                 if function in ["bind", "unbind", "cancel"]:
                     logger.info(f"CVC классифицировал '{utterance_lower}' -> '{function}' (уверенность: {confidence:.3f})")
