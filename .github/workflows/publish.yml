@@ -61,7 +61,7 @@ jobs:
           disable_notification: true
           message: |
             *Образ успешно опубликован в GHCR*
-            Репо: `${{ github.repository }}`
+            Репозиторий: `${{ github.repository }}`
             Ветка: `${{ github.event.workflow_run.head_branch }}`
             Образ: `ghcr.io/${{ github.repository_owner }}/rds-2p-salute-app:main`
             [Открыть run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})

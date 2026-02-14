@@ -75,7 +75,7 @@ jobs:
           disable_notification: true
           message: |
             *Тесты прошли успешно*
-            Репо: `${{ github.repository }}`
+            Репозиторий: `${{ github.repository }}`
             Ветка: `${{ github.ref_name }}`
             [Открыть run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
@@ -94,6 +94,6 @@ jobs:
           format: markdown
           message: |
             *Тесты не прошли*
-            Репо: `${{ github.repository }}`
+            Репозиторий: `${{ github.repository }}`
             Ветка: `${{ github.ref_name }}`
             [Открыть run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
