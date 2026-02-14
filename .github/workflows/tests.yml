@@ -3,8 +3,6 @@ name: Tests
 on:
   push:
     branches: [main, dev]
-  pull_request:
-    branches: [main, dev]
   workflow_dispatch:
 
 jobs:
@@ -54,7 +52,8 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm rds-2p-salute-dev ruff check . --output-format=github
+          set -e
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2p-salute-dev ruff check . --output-format=github
 
       - name: Run tests in container
         run: |
