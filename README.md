@@ -52,8 +52,8 @@
 
 ### Docker (рекомендуется)
 
-- Запуск: `docker compose up -d`. Сервисы: приложение (порты 20000, 50051), Redis.
-- Переменные окружения задаются в `docker-compose.yml` или через `.env` (например `REDIS_URL`, `CVC_SERVICE_URL` для адреса CVC).
+- **Локальная разработка / сборка:** `docker compose up -d`. Сервисы: приложение (порты 20000, 50051), Redis.
+- **Продакшен (образ из GHCR):** `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`. Переопределяет только сервис `app` (образ из registry, без сборки). Предварительно: `docker pull ghcr.io/shiwarai/rds-2p-salute-app:main`.
 
 ### Тестирование без реального робота
 

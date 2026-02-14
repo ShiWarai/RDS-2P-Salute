@@ -1,0 +1,14 @@
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+
+services:
+  app:
+    image: ghcr.io/shiwarai/rds-2p-salute-app:main
+    build: !reset null
+    volumes:
+      - app_logs:/app/logs
+    environment:
+      - CVC_SERVICE_URL=${CVC_SERVICE_URL:-http://cvc-api:20001}
+
+volumes:
+  # Именованный том для логов приложения (app.log); данные сохраняются между перезапусками контейнера
+  app_logs:

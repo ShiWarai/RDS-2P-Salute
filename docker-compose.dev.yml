@@ -1,5 +1,5 @@
 # Dev-образ для линта и тестов
-# В CI задаём RUNNER_UID/RUNNER_GID — файлы в workspace создаются от пользователя runner'а
+
 services:
   rds-2p-salute-dev:
     image: rds-2p-salute-dev
