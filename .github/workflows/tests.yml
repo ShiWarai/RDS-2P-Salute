@@ -80,7 +80,7 @@ jobs:
           format: markdown
           disable_notification: true
           message: |
-            *Пайплайн прошёл успешно*
+            *Тесты прошли успешно*
             Репо: `${{ github.repository }}`
             Ветка: `${{ github.ref_name }}`
             [Открыть run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
@@ -99,7 +99,7 @@ jobs:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           format: markdown
           message: |
-            *Пайплайн упал*
+            *Тесты не прошли*
             Репо: `${{ github.repository }}`
             Ветка: `${{ github.ref_name }}`
             [Открыть run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
