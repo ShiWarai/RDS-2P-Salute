@@ -192,6 +192,10 @@ Workflow **`.github/workflows/tests.yml`** при push/PR в `main` или `dev`
 - загрузка coverage в Codecov (опционально);
 - уведомления в Telegram при успехе/падении (секреты `TELEGRAM_TOKEN`, `TELEGRAM_TO`).
 
+При пуше в `main` после успешного прохождения тестов workflow **`.github/workflows/publish.yml`** публикует образ приложения в GitHub Container Registry (GHCR). На сервере можно подтянуть образ без логина (если пакет сделан публичным):  
+`docker pull ghcr.io/<owner>/rds-2p-salute-app:main`  
+После первого push откройте в репозитории на GitHub вкладку **Packages** → пакет `rds-2p-salute-app` → **Package settings** → **Change visibility** → **Public**.
+
 ---
 
 ## 🔗 API Endpoints
