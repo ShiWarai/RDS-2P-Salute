@@ -1,32 +1,122 @@
-# RDS-2P-Salute - Управление роботом-пандой через Сбер Салют
+# RDS-2P-Salute
 
-Этот проект создан для работы с [SmartApp API от Сбера](https://developers.sber.ru/docs/ru/va/api/overview) и позволяет управлять роботом-пандой через голосовые команды в виртуальном ассистенте Сбер Салют.
+[![Tests](https://github.com/ShiWarai/RDS-2P-Salute/actions/workflows/tests.yml/badge.svg)](https://github.com/ShiWarai/RDS-2P-Salute/actions/workflows/tests.yml)
+[![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
-## Архитектура решения
+Сервер веб-хуков для управления роботом-пандой через голосовые команды в виртуальном ассистенте [Сбер Салют](https://developers.sber.ru/docs/ru/va/api/overview). Привязка пользователь ↔ робот, классификация намерений через CVC, доставка команд роботам по gRPC.
 
-Проект реализован на основе **Чистой архитектуры (Clean Architecture)**, что обеспечивает четкое разделение ответственности, легкость тестирования и независимость от внешних фреймворков.
+## Стек технологий
 
-### Схема архитектуры
+| Категория       | Технологии                                                                 |
+| --------------- | --------------------------------------------------------------------------- |
+| API             | FastAPI, Uvicorn                                                            |
+| Данные          | Redis (привязки, состояния диалога)                                         |
+| Роботы          | gRPC (Stream), Protobuf                                                     |
+| NLP             | [CVC](https://github.com/ShiWarai/CVC) (внешний сервис классификации команд) |
+| Архитектура     | Clean Architecture (Domain, Application, Infrastructure, Presentation)     |
+| Инфраструктура  | Docker, Docker Compose                                                      |
+| Разработка      | pytest, ruff, fakeredis                                                      |
+
+## Оглавление
+
+| Раздел | Содержание |
+| ------ | ---------- |
+| [Быстрый старт](#быстрый-старт) | Запуск за 3 шага (Docker) |
+| [Установка и запуск](#установка-и-запуск) | Docker, fake_robot, тома Redis |
+| [Возможности](#возможности) | Привязка, NLP, помощь, gRPC |
+| [Архитектура](#архитектура) | Схема и описание слоёв |
+| [API](#api) | Эндпоинты |
+| [Структура проекта](#структура-проекта) | Дерево каталогов |
+| [Разработка](#разработка) | Тесты, линт |
+| [CI/CD](#cicd) | Пайплайн, публикация образа, ARM64 |
+| [Лицензия](#лицензия) | Использование |
+
+---
+
+## Быстрый старт
+
+1. При необходимости создайте `.env` (например `REDIS_URL`, `CVC_SERVICE_URL` — см. [Установка и запуск](#установка-и-запуск)).
+2. Соберите и запустите контейнеры:
+   ```bash
+   docker compose up -d
+   ```
+3. HTTP API: **http://localhost:20000**, gRPC: порт **50051**. Документация: http://localhost:20000/docs
+
+Остановка: `docker compose down` (без `-v`, чтобы не удалять данные Redis).
+
+---
+
+## Установка и запуск
+
+### Docker (рекомендуется)
+
+- Запуск: `docker compose up -d`. Сервисы: приложение (порты 20000, 50051), Redis.
+- Переменные окружения задаются в `docker-compose.yml` или через `.env` (например `REDIS_URL`, `CVC_SERVICE_URL` для адреса CVC).
+
+### Тестирование без реального робота
+
+В каталоге **fake_robot/** — имитатор робота (gRPC-клиент с `robot_id=0`). После `docker compose up -d` соберите и запустите контейнер имитатора: приложение будет считать робота подключённым, в консоли имитатора отображаются код привязки и команды. Подробно: [fake_robot/README.md](fake_robot/README.md).
+
+### Почему могут пропадать привязки после перезапуска
+
+Привязки хранятся в Redis в томе **redis_data**.
+
+- В `docker-compose.yml` задано **`name: rds-2p-salute`**, поэтому том один и тот же с любого пути запуска.
+- Redis пишет AOF в **`--dir /data`** (смонтированный том).
+- Команда **`docker compose down -v`** удаляет тома — после следующего `up` Redis будет пустой. Для обычного перезапуска: `docker compose down && docker compose up --build -d`.
+
+---
+
+## Возможности
+
+### Привязка роботов
+
+- Запрос: «Привяжи робота 1». Система запрашивает 4-значный код у робота (код в логах робота). Код действует 5 минут, 3 попытки ввода. Привязка сохраняется в Redis.
+
+### Управление по голосу (NLP)
+
+Через **CVC** распознаются естественные фразы, например:
+
+- «Попроси панду лечь» → `lie_down`
+- «Вставай» → `dismiss`
+- «Дай лапу» → `give_paw`
+
+### Интерактивная помощь
+
+- «Помощь» — выбор между служебными и исполняемыми командами. Состояние диалога сохраняется (например, «расскажи про бегать»).
+
+### gRPC
+
+Роботы подключаются по gRPC и держат Stream; команды доставляются мгновенно.
+
+---
+
+## Архитектура
+
+Реализация в стиле **Clean Architecture**: домен не зависит от фреймворков, сценарии в Use Cases, инфраструктура подключается через интерфейсы.
+
+### Схема
 
 ```mermaid
 graph TD
-    subgraph "Слой представления (Presentation)"
+    subgraph "Presentation"
         API[FastAPI Routes / Webhook]
     end
 
-    subgraph "Слой приложения (Application)"
+    subgraph "Application"
         UC[Use Cases: ProcessCommand, BindRobot, GetHelp]
         DTO[DTOs: CommandRequest, CommandResponse]
     end
 
-    subgraph "Слой предметной области (Domain)"
+    subgraph "Domain"
         Entities[Entities: User]
         VO[Value Objects: UserState, RobotId, BindingCode]
-        RepoInterfaces[Interfaces: IBindingRepository, IUserRepository, ICommandFeedbackRepository]
+        RepoInterfaces[Interfaces: IBindingRepository, IUserRepository, ...]
         ServiceInterfaces[Interfaces: ICommandClassifier, IRobotConnector]
     end
 
-    subgraph "Слой инфраструктуры (Infrastructure)"
+    subgraph "Infrastructure"
         Redis[Redis Persistence]
         gRPC[gRPC Server & Robot Connector]
         CVC[CVC Classifier Implementation]
@@ -36,52 +126,29 @@ graph TD
     UC --> Entities
     UC --> RepoInterfaces
     UC --> ServiceInterfaces
-    
     Redis -.-> RepoInterfaces
     gRPC -.-> ServiceInterfaces
     CVC -.-> ServiceInterfaces
 ```
 
-### Описание слоев
+### Слои
 
-1.  **Domain (Слой предметной области)**: Сердце приложения. Содержит бизнес-сущности (`User`), объекты-значения (`UserState`, `RobotId`, `BindingCode`) и интерфейсы (контракты) для доступа к данным и внешним сервисам. Не зависит ни от каких библиотек.
-2.  **Application (Слой приложения)**: Содержит Use Cases (сценарии использования), которые реализуют бизнес-логику (например, процесс привязки или логику обработки команд). Использует DTO для передачи данных.
-3.  **Infrastructure (Слой инфраструктуры)**: Реализация интерфейсов из Domain слоя. Здесь находится работа с Redis (хранение состояний и привязок), реализация gRPC сервера для подключения реальных роботов и клиент для CVC классификатора.
-4.  **Presentation (Слой представления)**: FastAPI роуты, обрабатывающие входящие вебхуки от Сбера и преобразующие их в вызовы Use Cases.
-
----
-
-## Основные возможности
-
-### 1. Система привязки роботов
-Пользователь должен привязать робота перед управлением:
-- **Запрос:** "Привяжи робота 1"
-- **Верификация:** Система запрашивает 4-значный код у робота. Код отображается в логах робота.
-- **Безопасность:** Код действует 5 минут, дается 3 попытки на ввод. Привязка сохраняется в Redis.
-
-### 2. Умное управление (NLP)
-Используется **CVC классификатор** для распознавания естественной речи:
-- "Попроси панду лечь" -> команда `lie_down`
-- "Вставай" -> команда `dismiss`
-- "Дай лапу" -> команда `give_paw`
-
-### 3. Интерактивная помощь
-Многоуровневое меню помощи:
-- При запросе "Помощь" предлагается выбор между "Служебными" и "Исполняемыми" командами.
-- Состояние пользователя сохраняется, позволяя вести контекстный диалог (например, "расскажи про бегать").
-
-### 4. gRPC Соединение
-Роботы подключаются к серверу по протоколу gRPC и удерживают постоянное соединение (Stream), что позволяет отправлять команды мгновенно.
+- **Domain** — сущности (`User`), value objects (`UserState`, `RobotId`, `BindingCode`), интерфейсы репозиториев и сервисов. Без внешних зависимостей.
+- **Application** — Use Cases и DTO; оркестрируют сценарии.
+- **Infrastructure** — реализации: Redis, gRPC-сервер и коннектор к роботам, клиент CVC.
+- **Presentation** — FastAPI-роуты, вебхуки Сбера → вызовы Use Cases.
 
 ---
 
-## Технологический стек
+## API
 
-- **FastAPI**: Современный и быстрый веб-фреймворк.
-- **Redis**: Хранение постоянных привязок (User -> Robot) и временных состояний диалога.
-- **gRPC**: Бинарный протокол для связи сервера с роботами.
-- **CVC Classifier**: Внешний сервис для классификации намерений пользователя.
-- **Mermaid**: Для визуализации архитектуры.
+| Метод | Путь | Описание |
+| ----- | ---- | -------- |
+| POST | /v1/webhook | Вход для SmartApp API (Сбер Салют) |
+| GET | /v1/health | Проверка состояния сервера |
+| GET | /v1/admin/bindings | Список привязок пользователь → робот (ограничение доступа) |
+| GET | /v1/admin/command-feedback | Репорты «исправить команду» (ограничение доступа) |
+| GET | /docs | Swagger UI |
 
 ---
 
@@ -90,78 +157,30 @@ graph TD
 ```
 RDS-2P-Salute/
 ├── app/
-│   ├── api/                # Презентационный слой: FastAPI роуты
-│   ├── application/        # Слой приложения: Use Cases и DTO
-│   │   ├── dto/            # Объекты переноса данных
-│   │   └── use_cases/      # Сценарии бизнес-логики
-│   ├── domain/             # Доменный слой: Сущности и интерфейсы
-│   │   ├── entities/       # Бизнес-сущности (User)
-│   │   ├── repositories/   # Интерфейсы репозиториев
-│   │   ├── services/       # Интерфейсы внешних сервисов
-│   │   └── value_objects/  # Объекты-значения (Enum, Validation)
-│   ├── infrastructure/     # Инфраструктурный слой: Реализации
-│   │   ├── config/         # Настройки приложения
-│   │   ├── external/       # gRPC сервер, клиенты внешних API
-│   │   └── persistence/    # Репозитории Redis
-│   ├── utils/              # Общие утилиты (парсинг, билдеры ответов)
-│   └── main.py             # Точка входа в приложение
-├── fake_robot/             # Имитатор робота для тестов (gRPC-клиент, id=0)
-├── grpc_proto/             # Protobuf определения для роботов
-├── logs/                   # Логи приложения
-├── tests/                  # Unit- и интеграционные тесты (pytest)
-│   ├── mocks/              # Моки (классификатор, репозитории, робот)
-│   ├── unit/
-│   └── integration/
-├── requirements.txt        # Зависимости
-├── requirements-dev.txt   # Зависимости для тестов и линта (pytest, ruff, fakeredis)
-├── pytest.ini              # Конфигурация pytest
-├── ruff.toml               # Конфигурация линтера
-├── docker-compose.yml      # Конфигурация Docker
-├── docker-compose.dev.yml  # Dev-образ для тестов и линта
-└── Dockerfile.dev         # Образ с pytest и ruff
+│   ├── api/                # Роуты FastAPI
+│   ├── application/        # Use Cases, DTO
+│   ├── domain/             # Сущности, интерфейсы, value objects
+│   ├── infrastructure/     # Redis, gRPC, CVC-клиент, конфиг
+│   ├── utils/
+│   └── main.py
+├── fake_robot/             # Имитатор робота (gRPC, robot_id=0)
+├── grpc_proto/             # Protobuf для роботов
+├── tests/                  # unit, integration, mocks
+├── docker-compose.yml
+├── docker-compose.dev.yml  # Dev-образ (pytest, ruff)
+├── Dockerfile
+├── Dockerfile.dev
+├── requirements.txt
+├── requirements-dev.txt
+├── pytest.ini
+└── ruff.toml
 ```
 
 ---
 
-## Запуск
+## Разработка
 
-### Через Docker (Рекомендуется)
-```bash
-docker compose up -d
-```
-Сервер будет доступен на порту `20000` (внешний), gRPC на порту `50051`.
-
-### Локально
-1. Установите зависимости: `pip install -r requirements.txt`
-2. Настройте Redis.
-3. Запустите: `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload`
-
-### Тестирование без реального робота
-
-В папке **fake_robot/** — имитатор робота (gRPC-клиент с `robot_id=0`). После `docker compose up -d` соберите образ и запустите контейнер: приложение будет считать, что к нему подключён робот, в консоли имитатора отображаются код привязки и команды. Подробно: [fake_robot/README.md](fake_robot/README.md).
-
-### Почему могут пропадать привязки после перезапуска
-
-Привязки хранятся в Redis в томе **redis_data**. Возможные причины потери данных:
-
-1. **Разные тома из-за разного пути запуска**  
-   Имя тома зависит от имени проекта Compose. Если запускать из разных папок (например `~/RDS-2P-Salute` и `~/project/RDS-2P-Salute`), у проекта могло быть разное имя и создавались **разные тома** — в одном данные есть, в другом Redis «пустой».  
-   В `docker-compose.yml` задано **`name: rds-2p-salute`**, поэтому том всегда один: **rds-2p-salute_redis_data**, с какого бы пути вы ни запускали.
-
-2. **Redis писал не в том**  
-   В команде Redis явно указано **`--dir /data`**, чтобы AOF всегда сохранялся в смонтированный том.
-
-3. **Удаление тома**  
-   Команда **`docker compose down -v`** удаляет тома — после следующего `up` Redis будет пустой. Для обычного перезапуска лучше без `-v`:  
-   `docker compose down && docker compose up --build -d`
-
----
-
-## Тесты и CI
-
-Тесты не используют реальный CVC и Redis: применяются моки и fakeredis.
-
-### Запуск тестов локально (Docker)
+Используется образ **rds-2p-salute-dev** (docker-compose.dev.yml):
 
 ```bash
 docker network create robot-services-network 2>/dev/null || true
@@ -169,44 +188,34 @@ docker compose -f docker-compose.yml build app
 docker compose -f docker-compose.yml -f docker-compose.dev.yml build rds-2p-salute-dev
 
 # Линт
-docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm rds-2p-salute-dev ruff check .
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2p-salute-dev ruff check .
 
 # Unit- и интеграционные тесты
-docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm rds-2p-salute-dev pytest tests/unit tests/integration -v --cov=app
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2p-salute-dev pytest tests/unit tests/integration -v --tb=short --cov=app --cov-report=term-missing
 ```
 
-### Запуск тестов без Docker
-
-```bash
-pip install -r requirements-dev.txt
-pytest tests/unit tests/integration -v --cov=app
-```
-
-### CI/CD (GitHub Actions)
-
-Workflow **`.github/workflows/tests.yml`** при push/PR в `main` или `dev`:
-
-- сборка образов `app` и dev;
-- линт (ruff);
-- pytest с отчётом покрытия;
-- загрузка coverage в Codecov (опционально);
-- уведомления в Telegram при успехе/падении (секреты `TELEGRAM_TOKEN`, `TELEGRAM_TO`).
-
-При пуше в `main` после успешного прохождения тестов workflow **`.github/workflows/publish.yml`** публикует образ приложения в GitHub Container Registry (GHCR). На сервере можно подтянуть образ без логина (если пакет сделан публичным):  
-`docker pull ghcr.io/<owner>/rds-2p-salute-app:main`  
-После первого push откройте в репозитории на GitHub вкладку **Packages** → пакет `rds-2p-salute-app` → **Package settings** → **Change visibility** → **Public**.
+Без Docker: `pip install -r requirements-dev.txt` и `pytest tests/unit tests/integration -v --cov=app`. Тесты используют моки и fakeredis, без реального CVC и Redis.
 
 ---
 
-## API Endpoints
+## CI/CD
 
-- `POST /v1/webhook` — основной вход для SmartApp API.
-- `GET /v1/health` — проверка состояния сервера.
-- `GET /v1/admin/bindings` — список привязок пользователь → робот в Redis (доступ только из локальной сети).
-- `GET /v1/admin/command-feedback` — выгрузка репортов «исправить команду» (доступ только из локальной сети).
-- `GET /docs` — Swagger документация.
+Пайплайны в `.github/workflows/`:
+
+| Workflow | Триггер | Назначение |
+| -------- | ------- | ---------- |
+| **Tests** (`tests.yml`) | Push в `main` или `dev`, ручной запуск | Сборка образов app и dev, линт (ruff), pytest с покрытием, загрузка coverage в Codecov (опционально), уведомления в Telegram при успехе/падении |
+| **Publish** (`publish.yml`) | Завершение Tests на ветке `main` (только при успехе) | Сборка и публикация образа в GitHub Container Registry (GHCR) |
+
+### Публикация образа
+
+- Образ: `ghcr.io/<owner>/rds-2p-salute-app:main` и по SHA коммита.
+- Собирается для **linux/amd64** и **linux/arm64** (например, для Orange Pi 5).
+- На сервере: `docker pull ghcr.io/<owner>/rds-2p-salute-app:main`. После первого push в репозитории: **Packages** → `rds-2p-salute-app` → **Package settings** → **Change visibility** → **Public** (если нужен публичный доступ без логина).
+- Уведомление в Telegram при успешной публикации (секреты `TELEGRAM_TOKEN`, `TELEGRAM_TO`).
 
 ---
 
 ## Лицензия
-Проект создан для образовательных и исследовательских целей в области робототехники и голосовых интерфейсов. 🐼🎖️
+
+Проект создан для образовательных и исследовательских целей в области робототехники и голосовых интерфейсов.
