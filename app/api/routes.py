@@ -1,6 +1,7 @@
 """
 API маршруты для SmartApp
 """
+import ipaddress
 import json
 import logging
 import re
@@ -8,10 +9,7 @@ from typing import Dict, Any, Optional, List
 
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
-import httpx
 
-from app.services.robot_service import RobotService
-from app.services.binding_service import BindingService
 from app.utils.request_parser import (
     extract_utterance_chatapp,
     extract_utterance_legacy,
@@ -19,282 +17,67 @@ from app.utils.request_parser import (
     extract_code_from_utterance,
     extract_number_tokens_from_tokenized,
     is_bind_command,
-    is_unbind_command
+    is_unbind_command,
+    extract_user_id
 )
 from app.utils.response_builder import create_chatapp_response, create_chatapp_response_multiple, create_legacy_response
-from app.config import get_robot_url
+from app.application.use_cases.process_command import ProcessCommandUseCase
+from app.application.dto.command_request import CommandRequestDTO
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Константы
-GREETING_MESSAGE = "Привет! Я робот-панда 🐼! Скажите 'скажи роботу лежать', 'вставай' или 'равняйсь'. Для списка команд - 'помощь'."
 
-
-async def request_binding_code(user_id: str, robot_id: str) -> tuple[bool, str, Optional[str], Optional[float]]:
-    """
-    Запрашивает код верификации у робота
-    
-    Returns:
-        tuple: (успех, сообщение, код, expires_at)
-    """
-    robot_url = get_robot_url(robot_id)
-    if not robot_url:
-        return False, f"Робот с номером {robot_id} не найден.", None, None
-    
+def get_process_command_use_case() -> ProcessCommandUseCase:
+    """Dependency для получения ProcessCommandUseCase"""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                f"{robot_url}/bind/request",
-                json={"user_id": user_id, "robot_id": robot_id}
-            )
-            response.raise_for_status()
-            result = response.json()
-            code = result.get("code")
-            expires_at = result.get("expires_at")
-            
-            if code and expires_at:
-                return True, "Код запрошен", code, expires_at
-            else:
-                return False, "Робот не вернул код", None, None
-                
-    except httpx.ConnectError:
-        return False, "Робот временно недоступен. Попробуйте позже.", None, None
-    except httpx.TimeoutException:
-        return False, "Превышено время ожидания ответа от робота.", None, None
+        from app.infrastructure.persistence.redis_user_repository import RedisUserRepository
+        from app.infrastructure.persistence.redis_binding_repository import RedisBindingRepository
+        from app.infrastructure.persistence.redis_command_feedback_repository import RedisCommandFeedbackRepository
+        from app.infrastructure.external.cvc_classifier import CVCCClassifier
+        from app.infrastructure.external.grpc_robot_connector import GrpcRobotConnector
+        from app.application.use_cases.bind_robot import BindRobotUseCase
+        from app.application.use_cases.unbind_robot import UnbindRobotUseCase
+        from app.application.use_cases.get_help import GetHelpUseCase
+        from app.application.use_cases.handle_binding_flow import HandleBindingFlowUseCase
+        from app.infrastructure.config.settings import settings
+
+        # Создаём репозитории
+        user_repository = RedisUserRepository(settings.REDIS_URL)
+        binding_repository = RedisBindingRepository(settings.REDIS_URL)
+        command_feedback_repository = RedisCommandFeedbackRepository(
+            settings.REDIS_URL,
+            last_command_ttl=settings.LAST_COMMAND_TTL_SECONDS,
+        )
+        
+        # Создаём внешние сервисы
+        command_classifier = CVCCClassifier(settings.CVC_SERVICE_URL, settings.CVC_TIMEOUT)
+        robot_connector = GrpcRobotConnector(binding_repository)
+        
+        # Создаём use cases
+        bind_robot_uc = BindRobotUseCase(binding_repository, user_repository, robot_connector)
+        unbind_robot_uc = UnbindRobotUseCase(binding_repository)
+        get_help_uc = GetHelpUseCase(user_repository)
+        handle_binding_flow_uc = HandleBindingFlowUseCase(binding_repository, user_repository, bind_robot_uc)
+        
+        # Создаём главный use case
+        process_command_uc = ProcessCommandUseCase(
+            user_repository=user_repository,
+            binding_repository=binding_repository,
+            command_classifier=command_classifier,
+            robot_connector=robot_connector,
+            bind_robot_uc=bind_robot_uc,
+            unbind_robot_uc=unbind_robot_uc,
+            get_help_uc=get_help_uc,
+            handle_binding_flow_uc=handle_binding_flow_uc,
+            command_feedback_repository=command_feedback_repository,
+        )
+
+        return process_command_uc
     except Exception as e:
-        logger.error(f"Error requesting binding code: {e}", exc_info=True)
-        return False, "Ошибка при запросе кода", None, None
-
-
-async def _handle_cancel_command(
-    binding_service: BindingService,
-    user_id: str,
-    binding_state: Optional[str]
-) -> tuple[str, bool]:
-    """Обрабатывает команду отмены привязки"""
-    if binding_state == "waiting_code":
-        binding_service.cancel_binding(user_id)
-        return "Привязка отменена. Можете начать заново.", False
-    else:
-        return "Нет активной операции для отмены.", False
-
-
-async def _handle_code_input(
-    binding_service: BindingService,
-    user_id: str,
-    utterance: str,
-    message: Optional[Dict[str, Any]] = None
-) -> tuple[Optional[str | List[str]], bool]:
-    """Обрабатывает ввод кода верификации"""
-    logger.debug(f"Извлечение кода из utterance: '{utterance}'")
-    code = extract_code_from_utterance(utterance)
-    
-    # Если код не извлечён или выглядит подозрительно (все цифры одинаковые),
-    # пробуем извлечь из tokenized_elements_list
-    if (not code or (code and len(set(code)) == 1)) and message:
-        logger.debug(f"Код не извлечён или подозрителен ({code}), пробуем tokenized_elements_list")
-        tokenized = message.get("tokenized_elements_list", [])
-        logger.debug(f"Tokenized elements для кода: {json.dumps(tokenized, ensure_ascii=False, indent=2)}")
-        
-        # Извлекаем все числовые токены используя общую функцию
-        number_tokens = extract_number_tokens_from_tokenized(tokenized)
-        
-        # Если нашли ровно 4 числа, используем их как код
-        if len(number_tokens) == 4:
-            code = ''.join(number_tokens)
-            logger.debug(f"Код извлечён из токенов: {code}")
-    
-    logger.debug(f"Извлеченный код: {code}")
-    if code:
-        success, message_text = binding_service.verify_binding_code(user_id, code)
-        if success:
-            binding_service.complete_binding(user_id)
-            robot_id = binding_service.get_robot_id(user_id)
-            # Возвращаем список из двух сообщений
-            return [
-                f"Робот {robot_id} успешно привязан! Теперь вы можете управлять им. 🐼",
-                "Привет! Я робот-панда 🐼! Скажите 'скажи роботу лежать', 'вставай' или 'равняйсь'."
-            ], False
-        else:
-            return message_text, False
-    else:
-        return "Сначала завершите привязку. Введите 4-значный код из логов робота или скажите 'отмена'.", False
-
-
-async def _handle_bind_start(
-    binding_service: BindingService,
-    user_id: str,
-    utterance: str
-) -> tuple[str, bool]:
-    """Обрабатывает начало процесса привязки"""
-    # Проверяем, не привязан ли уже робот
-    if binding_service.has_binding(user_id):
-        robot_id = binding_service.get_robot_id(user_id)
-        return f"У вас уже привязан робот {robot_id}. Для перепривязки скажите 'отвяжи робота', затем привяжите нового.", False
-    
-    # Извлекаем ID робота
-    logger.debug(f"=== ИЗВЛЕЧЕНИЕ ID РОБОТА ===")
-    logger.debug(f"utterance для extract_robot_id_from_bind_command: '{utterance}'")
-    robot_id = extract_robot_id_from_bind_command(utterance)
-    logger.debug(f"Извлеченный robot_id: {robot_id}")
-    if not robot_id:
-        return "Укажите номер робота. Например: 'привяжи робота один' или 'привяжи робота 1'.", False
-    
-    # Запрашиваем код у робота
-    success, message_text, code, expires_at = await request_binding_code(user_id, robot_id)
-    if success and code and expires_at:
-        logger.debug(f"Сохранение состояния привязки: user_id={user_id}, robot_id={robot_id}, code={code}")
-        binding_service.start_binding(user_id, robot_id, code, expires_at)
-        return f"Введите 4-значный код из логов робота {robot_id}. Код действителен 5 минут. Для отмены скажите 'отмена'.", False
-    else:
-        return message_text, False
-
-
-def _handle_unbind(
-    binding_service: BindingService,
-    user_id: str
-) -> tuple[str, bool]:
-    """Обрабатывает команду отвязки робота"""
-    if binding_service.has_binding(user_id):
-        robot_id = binding_service.get_robot_id(user_id)
-        binding_service.unbind_robot(user_id)
-        return f"Робот {robot_id} отвязан. Вы можете привязать другого робота.", False
-    else:
-        return "У вас нет привязанного робота.", False
-
-
-async def handle_binding_flow(
-    binding_service: BindingService,
-    user_id: str,
-    utterance: str,
-    message: Optional[Dict[str, Any]] = None
-) -> tuple[Optional[str | List[str]], bool]:
-    """
-    Обрабатывает процесс привязки робота
-    
-    Returns:
-        tuple: (текст ответа или список текстов для множественных сообщений, finished) 
-               или (None, False) если команда не связана с привязкой
-    """
-    utterance_lower = utterance.lower().strip()
-    
-    # Проверяем команду отмены (обрабатываем в любом состоянии)
-    binding_state = binding_service.get_binding_state(user_id)
-    if any(word in utterance_lower for word in ["отмена", "отменить", "отменить привязку"]):
-        return await _handle_cancel_command(binding_service, user_id, binding_state)
-    
-    # Кэшируем состояние привязки (уже получено выше)
-    logger.debug(f"Состояние привязки для user_id={user_id}: {binding_state}, utterance='{utterance}'")
-    
-    # Если ожидается код - проверяем ввод кода
-    if binding_state == "waiting_code":
-        return await _handle_code_input(binding_service, user_id, utterance, message)
-    
-    # Если нет активной привязки, проверяем команду начала привязки
-    if is_bind_command(utterance):
-        return await _handle_bind_start(binding_service, user_id, utterance)
-    
-    # Команда отвязки
-    if is_unbind_command(utterance):
-        return _handle_unbind(binding_service, user_id)
-    
-    # Команда не связана с привязкой
-    return None, False
-
-
-def get_robot_service() -> RobotService:
-    """Dependency для получения RobotService"""
-    from app.main import robot_service
-    return robot_service
-
-
-def get_binding_service() -> BindingService:
-    """Dependency для получения BindingService"""
-    from app.main import binding_service
-    return binding_service
-
-
-async def _process_command(
-    binding_service: BindingService,
-    robot_service: RobotService,
-    user_id: Optional[str],
-    utterance: str,
-    message: Optional[Dict[str, Any]],
-    is_new_session: bool,
-    intent: str,
-    data: Dict[str, Any],
-    is_chatapp: bool = True,
-    session: Optional[Dict[str, Any]] = None,
-    version: str = "1.0"
-) -> tuple[str, bool, Dict[str, Any]]:
-    """
-    Общая функция обработки команд для ChatApp и Legacy API
-    
-    Returns:
-        tuple: (текст ответа, finished/end_session, response_payload)
-    """
-    finished = False
-    
-    if is_new_session or (is_chatapp and intent == "run_app" and not utterance):
-        # Новая сессия - проверяем привязку
-        if user_id and binding_service.has_binding(user_id):
-            robot_id = binding_service.get_robot_id(user_id)
-            if is_chatapp:
-                text = f"Привет! Ваш робот {robot_id} готов к управлению. Скажите 'скажи роботу лежать', 'вставай' или 'равняйсь'."
-            else:
-                text = f"Привет! Ваш робот {robot_id} готов к управлению."
-        else:
-            text = "Привет! Для управления роботом сначала привяжите его. Скажите 'привяжи робота один' или 'привяжи робота 1'."
-    elif utterance:
-        # Обрабатываем команду
-        logger.debug(f"=== ПЕРЕДАЧА В handle_binding_flow ===")
-        logger.debug(f"utterance: '{utterance}'")
-        binding_text, binding_finished = await handle_binding_flow(binding_service, user_id, utterance, message)
-        logger.debug(f"Результат handle_binding_flow: text='{binding_text}', finished={binding_finished}")
-        
-        if binding_text is not None:
-            # Для ChatApp API множественные сообщения отправляем отдельно
-            if is_chatapp and isinstance(binding_text, list):
-                response_payload = create_chatapp_response_multiple(data, binding_text, binding_finished)
-                logger.info(f"Ответ: '{binding_text[0]}'")
-                return binding_text[0], binding_finished, response_payload
-            
-            # Для Legacy API множественные сообщения объединяем
-            if isinstance(binding_text, list):
-                text = " ".join(binding_text)
-            else:
-                text = binding_text
-            finished = binding_finished
-        else:
-            # Проверяем, есть ли привязка для обычных команд
-            if user_id and binding_service.has_binding(user_id):
-                robot_id = binding_service.get_robot_id(user_id)
-                robot_url = get_robot_url(robot_id)
-                result = await robot_service.execute_command(utterance, robot_url)
-                text = result.text
-                if result.error_message:
-                    text = f"{text} {result.error_message}"
-                finished = result.finished
-            else:
-                text = "Сначала привяжите робота. Скажите 'привяжи робота один' или 'привяжи робота 1'."
-    else:
-        if is_chatapp:
-            if user_id and binding_service.has_binding(user_id):
-                text = "Скажите команду для робота: 'скажи роботу лежать', 'вставай' или 'равняйсь'."
-            else:
-                text = "Для управления роботом привяжите его. Скажите 'привяжи робота один' или 'привяжи робота 1'."
-        else:
-            text = "Не понял команду."
-    
-    # Создаём response payload в зависимости от формата API
-    if is_chatapp:
-        response_payload = create_chatapp_response(data, text, finished)
-    else:
-        response_payload = create_legacy_response(text, session or {}, version, finished)
-    
-    return text, finished, response_payload
+        logger.error(f"Ошибка создания ProcessCommandUseCase: {e}", exc_info=True)
+        raise
 
 
 def log_user_command(user_visible_text: str, utterance: str, user_id: Optional[str] = None) -> None:
@@ -320,11 +103,10 @@ def log_user_command(user_visible_text: str, utterance: str, user_id: Optional[s
         logger.debug(f"Команда (для обработки): '{utterance}'")
 
 
-@router.post("/salute")
+@router.post("/v1/webhook")
 async def webhook(
     request: Request,
-    robot_service: RobotService = Depends(get_robot_service),
-    binding_service: BindingService = Depends(get_binding_service)
+    process_command_uc: ProcessCommandUseCase = Depends(get_process_command_use_case)
 ) -> JSONResponse:
     """Основной endpoint для обработки запросов от SmartApp API"""
     try:
@@ -333,7 +115,7 @@ async def webhook(
         logger.debug(json.dumps(data, ensure_ascii=False, indent=2))
         
     except Exception as e:
-        logger.error(f"Error parsing JSON: {e}", exc_info=True)
+        logger.error(f"Ошибка парсинга JSON: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     try:
@@ -341,7 +123,7 @@ async def webhook(
         logger.debug(f"Message name: {message_name}")
         
         # Извлекаем user_id
-        user_id = binding_service.get_user_id(data.get("uuid", {}))
+        user_id = extract_user_id(data.get("uuid", {}))
         logger.debug(f"User ID: {user_id}")
         
         # Определяем формат запроса: новый ChatApp API или старый SmartApp API
@@ -362,9 +144,10 @@ async def webhook(
             log_user_command(user_visible_text, utterance, user_id)
             
             # Детальная информация только в DEBUG режиме
-            logger.debug(f"Все варианты текста: original='{message.get('original_text', '')}', "
+            logger.debug(f"Варианты текста: original='{message.get('original_text', '')}', "
                         f"human_normalized='{message.get('human_normalized_text', '')}', "
-                        f"normalized='{message.get('normalized_text', '')}'")
+                        f"normalized='{message.get('normalized_text', '')}', "
+                        f"utterance для обработки='{utterance}'")
             
             # Если в utterance есть num_token, заменяем на число из токенов
             # Это нужно сделать ПЕРВЫМ, до других обработок
@@ -418,11 +201,22 @@ async def webhook(
             
             logger.debug(f"Финальный utterance для обработки: '{utterance}'")
             
-            # Обрабатываем команду (общая логика для ChatApp API)
-            text, finished, response_payload = await _process_command(
-                binding_service, robot_service, user_id, utterance, message,
-                is_new_session, intent, data, is_chatapp=True
+            # Создаём DTO запроса
+            command_request = CommandRequestDTO(
+                user_id=user_id,
+                utterance=utterance,
+                is_new_session=is_new_session,
+                intent=intent,
+                data=data,
+                message=message,
+                is_chatapp=True
             )
+            
+            # Обрабатываем команду через use case
+            command_response = await process_command_uc.execute(command_request)
+            text = command_response.text
+            finished = command_response.finished
+            response_payload = command_response.response_payload
             
             # Логируем ответ бота
             logger.info(f"Ответ: '{text}'")
@@ -439,11 +233,24 @@ async def webhook(
             if utterance:
                 log_user_command(utterance, utterance, user_id)
             
-            # Обрабатываем команду (общая логика для Legacy API)
-            text, end_session, response_payload = await _process_command(
-                binding_service, robot_service, user_id, utterance, None,
-                is_new_session, "", data, is_chatapp=False, session=session, version=version
+            # Создаём DTO запроса
+            command_request = CommandRequestDTO(
+                user_id=user_id,
+                utterance=utterance,
+                is_new_session=is_new_session,
+                intent="",
+                data=data,
+                message=None,
+                is_chatapp=False,
+                session=session,
+                version=version
             )
+            
+            # Обрабатываем команду через use case
+            command_response = await process_command_uc.execute(command_request)
+            text = command_response.text
+            end_session = command_response.finished
+            response_payload = command_response.response_payload
             
             # Логируем ответ бота
             logger.info(f"Ответ: '{text}'")
@@ -455,50 +262,80 @@ async def webhook(
         )
         
     except Exception as e:
-        logger.error(f"Error processing request: {e}", exc_info=True)
+        logger.error(f"Ошибка обработки запроса: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.get("/")
+@router.get("/v1/")
 async def root():
-    """Health check endpoint"""
+    """Корень API (v1)."""
     return {"status": "ok", "message": "SmartApp API is running"}
 
 
-@router.get("/health")
+@router.get("/v1/health")
 async def health():
-    """Health check endpoint"""
+    """Проверка состояния сервера."""
     return {"status": "healthy"}
 
 
-@router.post("/robot/command")
-async def robot_command(
+def _is_private_client_ip(request: Request) -> bool:
+    """Проверяет, что запрос пришёл с частного/локального IP (доступ только из локальной сети)."""
+    host = request.client.host if request.client else None
+    if not host:
+        return False
+    if host == "::1":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback
+    except ValueError:
+        return False
+
+
+def require_local_network(request: Request) -> None:
+    """Зависимость: разрешает доступ только с частных IP. Иначе 403."""
+    if not _is_private_client_ip(request):
+        logger.warning("Отклонён доступ к /v1/admin/* с IP: %s", getattr(request.client, "host", None))
+        raise HTTPException(status_code=403, detail="Access allowed only from local network")
+
+
+def get_binding_repository(request: Request):
+    """Возвращает репозиторий привязок из app.state (один экземпляр на приложение)."""
+    return request.app.state.binding_repository
+
+
+def get_command_feedback_repository():
+    """Dependency для получения репозитория обратной связи по командам."""
+    from app.infrastructure.persistence.redis_command_feedback_repository import (
+        RedisCommandFeedbackRepository,
+    )
+    from app.infrastructure.config.settings import settings
+
+    return RedisCommandFeedbackRepository(
+        settings.REDIS_URL,
+        last_command_ttl=settings.LAST_COMMAND_TTL_SECONDS,
+    )
+
+
+@router.get("/v1/admin/command-feedback")
+async def export_command_feedback(
     request: Request,
-    robot_service: RobotService = Depends(get_robot_service)
-) -> Dict[str, Any]:
+    _: None = Depends(require_local_network),
+    repo=Depends(get_command_feedback_repository),
+) -> JSONResponse:
     """
-    Endpoint для тестирования команд робота.
-    Принимает JSON с полем 'utterance' (текст команды).
+    Выгрузка записей обратной связи по командам («исправить команду»).
+
+    Доступ только из локальной сети (частные IP). В Docker — из сети robot-services-network:
+    http://rds-2p-salute-app:8000/v1/admin/command-feedback
     """
     try:
-        data = await request.json()
-        utterance = data.get("utterance", "")
-        
-        if not utterance:
-            raise HTTPException(status_code=400, detail="Field 'utterance' is required")
-        
-        result = await robot_service.execute_command(utterance)
-        
-        return {
-            "success": result.success,
-            "command": result.command.value,
-            "text": result.text,
-            "motor_command": result.motor_command,
-            "error_message": result.error_message
-        }
-    except HTTPException:
-        raise
+        items = repo.get_all_feedback()
+        return JSONResponse(
+            content=items,
+            media_type="application/json",
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
     except Exception as e:
-        logger.error(f"Error in robot command endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
+        logger.error("Ошибка выгрузки command-feedback: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")

@@ -1,0 +1,4 @@
+# Dev-образ для линта и тестов (на базе app + pytest, ruff)
+FROM rds-2p-salute-app
+COPY requirements-dev.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt

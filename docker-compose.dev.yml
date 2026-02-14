@@ -1,0 +1,17 @@
+# Dev-образ для линта и тестов
+# В CI задаём RUNNER_UID/RUNNER_GID — файлы в workspace создаются от пользователя runner'а
+services:
+  rds-2p-salute-dev:
+    image: rds-2p-salute-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    user: "${RUNNER_UID:-0}:${RUNNER_GID:-0}"
+    volumes:
+      - .:/app
+    networks:
+      - robot-services-network
+
+networks:
+  robot-services-network:
+    external: true

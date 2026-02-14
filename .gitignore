@@ -39,7 +39,6 @@ ENV/
 
 # Logs
 *.log
-logs/
 
 # Binding data (auto-generated)
 user_robot_bindings.json
@@ -50,6 +49,12 @@ binding_states.json
 *.log
 data/*.pid
 data/*.log
+
+# Testing
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
 
 # OS
 .DS_Store

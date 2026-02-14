@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package robot;
+
+// Сервис для отправки команд роботам через Server Streaming RPC
+service RobotCommandService {
+  rpc StreamCommands(RobotConnectRequest) returns (stream StreamMessage);
+}
+
+// Запрос подключения от робота
+message RobotConnectRequest {
+  string robot_id = 1;
+}
+
+// Сообщение в потоке (oneof - только одно поле может быть установлено)
+message StreamMessage {
+  oneof message {
+    BindingCodeMessage binding_code = 1;
+    Command command = 2;
+    ErrorMessage error = 3;
+    StatusMessage status = 4;
+  }
+}
+
+// Код привязки
+message BindingCodeMessage {
+  string code = 1;           // 4-значный код
+  int64 expires_at = 2;      // Unix timestamp истечения
+}
+
+// Команда для робота
+message Command {
+  string command_text = 1;   // Текст команды (например, "лапу", "бегать")
+  int64 timestamp = 2;       // Unix timestamp
+  string command_id = 3;     // Уникальный ID команды
+}
+
+// Сообщение об ошибке
+message ErrorMessage {
+  string error_code = 1;
+  string error_message = 2;
+}
+
+// Статус подключения
+message StatusMessage {
+  string status = 1;         // "connected", "binding_required", "binding_completed"
+  string message = 2;        // Дополнительное сообщение
+}

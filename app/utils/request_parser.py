@@ -57,26 +57,29 @@ def extract_utterance_chatapp(message: Dict[str, Any]) -> str:
     """
     Извлекает текст команды из формата ChatApp API.
     
-    Приоритет: human_normalized_text (то, что видит пользователь на экране),
-    затем original_text, затем normalized_text (только если нужно преобразование чисел).
+    Приоритет для классификации команд:
+    1. original_text - исходный произнесенный текст (сохраняет грамматическую форму)
+    2. normalized_text - нормализованный текст (сохраняет грамматическую форму)
+    3. human_normalized_text - грамматически "исправленный" текст (может исказить команду)
     
-    Используем human_normalized_text в первую очередь, так как это то, что видит
-    пользователь на экране и что он ожидает увидеть в логах.
+    Используем original_text/normalized_text в первую очередь, так как они сохраняют
+    правильную грамматическую форму команды (например, "дать лапу" вместо "дать лапа").
+    human_normalized_text используется только как fallback.
     """
-    # Сначала human_normalized_text - то, что видит пользователь на экране
-    human_normalized = message.get("human_normalized_text", "")
-    if human_normalized:
-        return human_normalized.lower().strip()
-    
-    # Затем original_text
+    # Сначала original_text - исходный произнесенный текст
     original = message.get("original_text", "")
     if original:
         return original.lower().strip()
     
-    # В конце normalized_text (может отличаться от того, что видит пользователь)
+    # Затем normalized_text - нормализованный, но с сохранением грамматической формы
     normalized = message.get("normalized_text", "")
     if normalized:
         return normalized.lower().strip()
+    
+    # В конце human_normalized_text - грамматически "исправленный" (может исказить команду)
+    human_normalized = message.get("human_normalized_text", "")
+    if human_normalized:
+        return human_normalized.lower().strip()
     
     return ""
 
@@ -198,3 +201,21 @@ def extract_number_tokens_from_tokenized(tokenized_elements_list: List[Dict[str,
                 number_tokens.append(str(value))
     
     return number_tokens
+
+
+def extract_user_id(uuid_data: Dict[str, Any]) -> Optional[str]:
+    """
+    Извлекает идентификатор пользователя из uuid.
+    Нормализует к строке и убирает пробелы, чтобы один и тот же пользователь
+    всегда давал один ключ в Redis (избегаем «слетающих» привязок при разном формате).
+    
+    Args:
+        uuid_data: Объект uuid из запроса SmartApp API
+        
+    Returns:
+        Идентификатор пользователя (sub или userId), строка без пробелов по краям
+    """
+    raw = uuid_data.get("sub") or uuid_data.get("userId")
+    if raw is None:
+        return None
+    return str(raw).strip() or None

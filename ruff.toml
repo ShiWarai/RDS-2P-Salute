@@ -1,0 +1,7 @@
+target-version = "py310"
+line-length = 100
+exclude = [".git", "__pycache__", "build", "dist", ".venv", "grpc_proto", "fake_robot"]
+
+[lint]
+select = ["E", "F", "W"]
+ignore = ["E501", "E722", "E402", "W293", "W291", "F401", "F541", "F811", "F841"]
