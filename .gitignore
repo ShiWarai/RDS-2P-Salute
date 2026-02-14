@@ -39,7 +39,6 @@ ENV/
 
 # Logs
 *.log
-logs/
 
 # Binding data (auto-generated)
 user_robot_bindings.json

@@ -206,12 +206,16 @@ def extract_number_tokens_from_tokenized(tokenized_elements_list: List[Dict[str,
 def extract_user_id(uuid_data: Dict[str, Any]) -> Optional[str]:
     """
     Извлекает идентификатор пользователя из uuid.
+    Нормализует к строке и убирает пробелы, чтобы один и тот же пользователь
+    всегда давал один ключ в Redis (избегаем «слетающих» привязок при разном формате).
     
     Args:
         uuid_data: Объект uuid из запроса SmartApp API
         
     Returns:
-        Идентификатор пользователя (sub или userId)
+        Идентификатор пользователя (sub или userId), строка без пробелов по краям
     """
-    # Используем sub как основной идентификатор (более стабильный)
-    return uuid_data.get("sub") or uuid_data.get("userId")
+    raw = uuid_data.get("sub") or uuid_data.get("userId")
+    if raw is None:
+        return None
+    return str(raw).strip() or None

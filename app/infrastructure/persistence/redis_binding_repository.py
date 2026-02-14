@@ -20,6 +20,13 @@ BINDING_DATA_PREFIX = "binding_data:"
 USER_STATES_PREFIX = "user_states:"
 
 
+def _binding_key_to_user_id(key: str) -> str:
+    """Из ключа bindings:user_id возвращает user_id."""
+    if key.startswith(BINDINGS_PREFIX):
+        return key[len(BINDINGS_PREFIX) :]
+    return key
+
+
 class RedisBindingRepository(IBindingRepository):
     """Реализация репозитория привязок через Redis"""
     
@@ -227,3 +234,22 @@ class RedisBindingRepository(IBindingRepository):
         except Exception as e:
             logger.error(f"Ошибка отвязки робота для user_id={user_id}: {e}")
             return False
+
+    def get_all_bindings(self) -> list[dict]:
+        """
+        Возвращает все постоянные привязки (для админ-просмотра).
+        Ключи Redis: bindings:* без TTL — хранятся до явной отвязки или перезапуска без volume.
+        """
+        try:
+            pattern = f"{BINDINGS_PREFIX}*"
+            keys = self.redis_client.keys(pattern)
+            out = []
+            for key in keys:
+                user_id = _binding_key_to_user_id(key)
+                robot_id = self.redis_client.get(key)
+                if robot_id:
+                    out.append({"user_id": user_id, "robot_id": robot_id})
+            return out
+        except Exception as e:
+            logger.error("Ошибка get_all_bindings: %s", e, exc_info=True)
+            return []

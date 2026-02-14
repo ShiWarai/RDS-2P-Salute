@@ -295,8 +295,13 @@ def _is_private_client_ip(request: Request) -> bool:
 def require_local_network(request: Request) -> None:
     """Зависимость: разрешает доступ только с частных IP. Иначе 403."""
     if not _is_private_client_ip(request):
-        logger.warning("Отклонён доступ к /v1/admin/command-feedback с IP: %s", getattr(request.client, "host", None))
+        logger.warning("Отклонён доступ к /v1/admin/* с IP: %s", getattr(request.client, "host", None))
         raise HTTPException(status_code=403, detail="Access allowed only from local network")
+
+
+def get_binding_repository(request: Request):
+    """Возвращает репозиторий привязок из app.state (один экземпляр на приложение)."""
+    return request.app.state.binding_repository
 
 
 def get_command_feedback_repository():
@@ -334,4 +339,3 @@ async def export_command_feedback(
     except Exception as e:
         logger.error("Ошибка выгрузки command-feedback: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
-
