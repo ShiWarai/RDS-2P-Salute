@@ -50,6 +50,12 @@ binding_states.json
 data/*.pid
 data/*.log
 
+# Testing
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
 # OS
 .DS_Store
 Thumbs.db
