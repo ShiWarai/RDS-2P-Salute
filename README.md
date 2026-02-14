@@ -192,7 +192,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml build rds-2p-salu
 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2p-salute-dev ruff check .
 
 # Unit- и интеграционные тесты
-docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2p-salute-dev pytest tests/unit tests/integration -v --tb=short --cov=app --cov-report=term-missing
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2p-salute-dev pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
 ```
 
 Тесты используют моки и fakeredis, без реального CVC и Redis.
@@ -205,7 +205,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2
 
 | Workflow | Триггер | Назначение |
 | -------- | ------- | ---------- |
-| **Tests** (`tests.yml`) | Push в `main` или `dev`, ручной запуск | Сборка образов app и dev, линт (ruff), pytest с покрытием, загрузка coverage в Codecov (опционально), уведомления в Telegram при успехе/падении |
+| **Tests** (`tests.yml`) | Push в `main` или `dev`, ручной запуск | Сборка образов app и dev, линт (ruff), pytest с покрытием, уведомления в Telegram при успехе/падении |
 | **Publish** (`publish.yml`) | Завершение Tests на ветке `main` (только при успехе) | Сборка и публикация образа в GitHub Container Registry (GHCR) |
 
 ### Публикация образа

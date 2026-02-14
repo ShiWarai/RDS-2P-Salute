@@ -57,13 +57,7 @@ jobs:
 
       - name: Run tests in container
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm rds-2p-salute-dev pytest tests/unit tests/integration -v --tb=short --cov=app --cov-report=xml --cov-report=term-missing
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.xml
-          fail_ci_if_error: false
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm rds-2p-salute-dev pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
 
   notify-telegram-on-success:
     name: Notify Telegram on success
