@@ -114,17 +114,23 @@ class BindRobotUseCase:
             # На самом деле, GrpcRobotConnector теперь не зависит от репозитория! 
             # Он просто принимает robot_id.
             
-            # Давайте сначала завершим привязку в БД
-            if self.binding_repository.complete_binding(user_id):
-                # Теперь робот точно есть в постоянных привязках
-                robot_id = self.binding_repository.get_robot_id(user_id)
-                if robot_id:
-                    # Уведомляем робота
-                    self.robot_connector.complete_binding_with_code(user_id, robot_id)
-                    
-                    return True, f"Робот {robot_id.value} привязан! 🐼"
-            
-            return False, "Ошибка при завершении привязки"
+            # Завершаем привязку в БД
+            if not self.binding_repository.complete_binding(user_id):
+                return False, "Ошибка при завершении привязки"
+
+            # Привязка уже сохранена в Redis; получаем robot_id для уведомления робота
+            robot_id = self.binding_repository.get_robot_id(user_id)
+            if robot_id:
+                self.robot_connector.complete_binding_with_code(user_id, robot_id)
+                return True, f"Робот {robot_id.value} привязан! 🐼"
+
+            # complete_binding прошёл, но чтение robot_id не удалось (например, сбой Redis)
+            # Не возвращаем ошибку — привязка уже есть, иначе пользователь попытается привязать снова
+            logger.warning(
+                "complete_binding успешен для user_id=%s, но get_robot_id вернул None",
+                user_id,
+            )
+            return True, "Робот привязан."
         
         return False, message
     
