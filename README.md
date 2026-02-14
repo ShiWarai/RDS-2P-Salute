@@ -5,7 +5,7 @@
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Сервер веб-хуков для управления роботом-пандой через голосовые команды в виртуальном ассистенте [Сбер Салют](https://developers.sber.ru/docs/ru/va/api/overview). Привязка пользователь ↔ робот, классификация намерений через CVC, доставка команд роботам по gRPC.
+Сервер веб-хуков для управления роботом-пандой через голосовые команды в виртуальном ассистенте Сбер Салют. Привязка пользователь ↔ робот, классификация намерений через CVC, доставка команд роботам по gRPC.
 
 ## Стек технологий
 
@@ -29,7 +29,7 @@
 | [Архитектура](#архитектура) | Схема и описание слоёв |
 | [API](#api) | Эндпоинты |
 | [Структура проекта](#структура-проекта) | Дерево каталогов |
-| [Разработка](#разработка) | Тесты, линт |
+| [Тестирование](#тестирование) | Тесты, линт |
 | [CI/CD](#cicd) | Пайплайн, публикация образа, ARM64 |
 | [Лицензия](#лицензия) | Использование |
 
@@ -179,7 +179,7 @@ RDS-2P-Salute/
 
 ---
 
-## Разработка
+## Тестирование
 
 Используется образ **rds-2p-salute-dev** (docker-compose.dev.yml):
 
@@ -195,7 +195,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2
 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2p-salute-dev pytest tests/unit tests/integration -v --tb=short --cov=app --cov-report=term-missing
 ```
 
-Без Docker: `pip install -r requirements-dev.txt` и `pytest tests/unit tests/integration -v --cov=app`. Тесты используют моки и fakeredis, без реального CVC и Redis.
+Тесты используют моки и fakeredis, без реального CVC и Redis.
 
 ---
 
@@ -210,13 +210,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -T rds-2
 
 ### Публикация образа
 
-- Образ: `ghcr.io/<owner>/rds-2p-salute-app:main` и по SHA коммита.
+- Образ: `ghcr.io/shiwarai/rds-2p-salute-app:main` и по SHA коммита.
 - Собирается для **linux/amd64** и **linux/arm64** (например, для Orange Pi 5).
-- На сервере: `docker pull ghcr.io/<owner>/rds-2p-salute-app:main`. После первого push в репозитории: **Packages** → `rds-2p-salute-app` → **Package settings** → **Change visibility** → **Public** (если нужен публичный доступ без логина).
+- На сервере: `docker pull ghcr.io/shiwarai/rds-2p-salute-app:main`. После первого push в репозитории: **Packages** → `rds-2p-salute-app` → **Package settings** → **Change visibility** → **Public** (если нужен публичный доступ без логина).
 - Уведомление в Telegram при успешной публикации (секреты `TELEGRAM_TOKEN`, `TELEGRAM_TO`).
 
 ---
 
 ## Лицензия
 
-MIT. Подробности — в [LICENSE](LICENSE).
+MIT
+
+*Проект создан с использованием нейросетей.*
