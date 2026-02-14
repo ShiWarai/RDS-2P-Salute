@@ -26,7 +26,6 @@ services:
       - "50051:50051"
     volumes:
       - ./app:/app/app
-      - ./config:/app/config:ro
       - ./logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1

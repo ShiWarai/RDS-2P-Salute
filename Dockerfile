@@ -24,7 +24,6 @@ RUN python3 -m grpc_tools.protoc -I./grpc_proto --python_out=./grpc_proto --grpc
 
 # Копирование кода приложения
 COPY app/ ./app/
-COPY config/ ./config/
 
 # Создание директории для логов
 RUN mkdir -p /app/logs

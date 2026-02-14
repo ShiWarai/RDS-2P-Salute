@@ -3,15 +3,9 @@
 """
 import queue
 import logging
-import json
-from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
-
-# Определяем корень проекта
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-ROBOTS_CONFIG_FILE = PROJECT_ROOT / "config" / "robots.json"
 
 
 class RobotConnectionManager:
@@ -20,29 +14,10 @@ class RobotConnectionManager:
     def __init__(self):
         """Инициализация менеджера соединений"""
         self._connections: Dict[str, queue.Queue] = {}
-        self._robots_config_cache: Optional[Dict[str, Dict[str, Any]]] = None
         logger.info("RobotConnectionManager инициализирован")
-    
+
     def get_robot_name(self, robot_id: str) -> str:
-        """
-        Получает имя робота по ID (опционально из конфига)
-        """
-        # Загружаем конфиг только если он существует и еще не загружен
-        if self._robots_config_cache is None:
-            if ROBOTS_CONFIG_FILE.exists():
-                try:
-                    with open(ROBOTS_CONFIG_FILE, 'r', encoding='utf-8') as f:
-                        self._robots_config_cache = json.load(f)
-                    logger.debug(f"Loaded robot names from config: {len(self._robots_config_cache)} robots")
-                except Exception as e:
-                    logger.debug(f"Could not load robots config: {e}")
-                    self._robots_config_cache = {}
-            else:
-                self._robots_config_cache = {}
-        
-        if self._robots_config_cache and robot_id in self._robots_config_cache:
-            return self._robots_config_cache[robot_id].get("name", f"Робот {robot_id}")
-        
+        """Возвращает отображаемое имя робота: «Робот {robot_id}»."""
         return f"Робот {robot_id}"
 
     def get_available_robots_list(self) -> str:
