@@ -11,6 +11,7 @@ from app.domain.repositories.binding_repository import IBindingRepository
 from app.domain.value_objects.robot_id import RobotId
 from app.domain.value_objects.binding_code import BindingCode
 from app.domain.value_objects.user_state import UserState
+from app.utils.redis_url import redact_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,10 @@ class RedisBindingRepository(IBindingRepository):
         try:
             self.redis_client = redis.from_url(redis_url, decode_responses=True)
             self.redis_client.ping()
-            logger.info(f"RedisBindingRepository инициализирован (Redis: {redis_url})")
+            logger.info(
+                "RedisBindingRepository инициализирован (Redis: %s)",
+                redact_redis_url(redis_url),
+            )
         except Exception as e:
             logger.error(f"Ошибка подключения к Redis: {e}")
             raise

@@ -9,6 +9,7 @@ from typing import Optional
 import redis
 
 from app.domain.repositories.command_feedback_repository import ICommandFeedbackRepository
+from app.utils.redis_url import redact_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class RedisCommandFeedbackRepository(ICommandFeedbackRepository):
             self.redis_client.ping()
             logger.info(
                 "RedisCommandFeedbackRepository инициализирован (Redis: %s)",
-                redis_url,
+                redact_redis_url(redis_url),
             )
         except Exception as e:
             logger.error("Ошибка подключения к Redis: %s", e)

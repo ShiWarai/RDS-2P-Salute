@@ -10,6 +10,7 @@ import redis
 from app.domain.entities.user import User
 from app.domain.repositories.user_repository import IUserRepository
 from app.domain.value_objects.user_state import UserState
+from app.utils.redis_url import redact_redis_url
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,10 @@ class RedisUserRepository(IUserRepository):
         try:
             self.redis_client = redis.from_url(redis_url, decode_responses=True)
             self.redis_client.ping()
-            logger.info(f"RedisUserRepository инициализирован (Redis: {redis_url})")
+            logger.info(
+                "RedisUserRepository инициализирован (Redis: %s)",
+                redact_redis_url(redis_url),
+            )
         except Exception as e:
             logger.error(f"Ошибка подключения к Redis: {e}")
             raise
