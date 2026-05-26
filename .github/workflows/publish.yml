@@ -44,6 +44,7 @@ jobs:
             ${{ env.IMAGE_BASE }}:main
             ${{ env.IMAGE_BASE }}:${{ github.event.workflow_run.head_sha }}
           push: true
+          provenance: false
 
   notify-telegram-on-publish:
     name: Notify Telegram on image published
